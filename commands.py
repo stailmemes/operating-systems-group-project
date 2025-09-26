@@ -62,13 +62,5 @@ def run_file(arg):
     if not os.path.exists(path):
         PrintFormatter.errorPrint(f"{path}: this file does not exist")
         return
-    if path.endswith(".py"):
 
-        subprocess.run([sys.executable, path])
-    else:
-
-        subprocess.run([path], shell=True)
-
-
-    '''except PermissionError:
-        PrintFormatter.errorPrint(f"{path}: Permission denied")'''
+    subprocess.run(arg.path + arg.args, shell=True)
