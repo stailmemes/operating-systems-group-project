@@ -3,8 +3,9 @@ import shutil
 import sys
 
 # Lists files in the current directory
-def list_directory(args):
+def list_directory(arg):
     files = os.listdir(os.getcwd())
+    print('\033[94m'+ os.getcwd() + "  <- current directory" + '\033[92m')
     for file in files:
         print(file)
 
