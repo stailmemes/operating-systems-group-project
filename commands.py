@@ -5,6 +5,12 @@ import PrintFormatter
 import subprocess
 
 
+
+def create_file(args):
+    path =args.path
+    with open(path,"w") as f:
+        pass
+
 def make_directory(args):
     path =args.path
     try:

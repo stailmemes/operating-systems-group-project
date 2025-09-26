@@ -50,4 +50,10 @@ def build_parser():
     mkdir_parser.add_argument("path", help = "path to place to create dir")
     mkdir_parser.set_defaults(func= commands.make_directory)
 
+    #create file
+    crf_parser = subparsers.add_parser("crf", help = "makes an empty file")
+    crf_parser.add_argument("path", help= "path where file is created")
+    crf_parser.set_defaults(func=commands.create_file)
+
+
     return parser
