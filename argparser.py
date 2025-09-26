@@ -45,5 +45,9 @@ def build_parser():
     run_parser.add_argument("path", help = "path to file")
     run_parser.set_defaults(func=commands.run_file)
 
+    #make dir
+    mkdir_parser = subparsers.add_parser("mkdir", help = "makes a directory ")
+    mkdir_parser.add_argument("path", help = "path to place to create dir")
+    mkdir_parser.set_defaults(func= commands.make_directory)
 
     return parser
