@@ -1,13 +1,14 @@
 import os
 import shutil
 import sys
+import PrintFormatter
 
 # Lists files in the current directory
 def list_directory(arg):
     files = os.listdir(os.getcwd())
-    print('\033[94m'+ os.getcwd() + "  <- current directory" + '\033[92m')
+    PrintFormatter.Blue_Output(os.getcwd() + "  <- current directory")
     for file in files:
-        print(file)
+        PrintFormatter.Green_Output(file)
 
 #Change the current directory
 def change_directory(args):

@@ -4,6 +4,14 @@
 def errorPrint(text):
     print('\033[93m' +text)
 
+def Blue_Output(text):
+    print('\033[94m'+ text)
+
+
+def Green_Output(text):
+    print('\033[92m' + text)
+
+
 def CInput(text):
     inputed_text = input('\033[95m' + text)
     str(inputed_text)
