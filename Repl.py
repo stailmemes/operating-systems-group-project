@@ -18,8 +18,10 @@ def Repl_loop():
         except EOFError:
             print("error")
             break
-
-
+        except SystemExit:
+            continue
+        except KeyboardInterrupt:
+            print()
 
 Repl_loop()
 

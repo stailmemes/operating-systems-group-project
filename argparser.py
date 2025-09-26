@@ -40,4 +40,10 @@ def build_parser():
     rm_parser.add_argument("filename", help="File to delete")
     rm_parser.set_defaults(func=commands.delete_file)
 
+    # run
+    run_parser = subparsers.add_parser("run", help="executes files and programs")
+    run_parser.add_argument("path", help = "path to file")
+    run_parser.set_defaults(func=commands.run_file)
+
+
     return parser

@@ -2,6 +2,7 @@ import os
 import shutil
 import sys
 import PrintFormatter
+import subprocess
 
 # Lists files in the current directory
 def list_directory(arg):
@@ -54,3 +55,20 @@ def delete_file(args):
         print(f"File {args.filename} does not exist")
     except Exception as e:
         print(f"Error deleting file: {e}")
+
+# Run file
+def run_file(arg):
+    path = arg.path
+    if not os.path.exists(path):
+        PrintFormatter.errorPrint(f"{path}: this file does not exist")
+        return
+    if path.endswith(".py"):
+
+        subprocess.run([sys.executable, path])
+    else:
+
+        subprocess.run([path], shell=True)
+
+
+    '''except PermissionError:
+        PrintFormatter.errorPrint(f"{path}: Permission denied")'''
