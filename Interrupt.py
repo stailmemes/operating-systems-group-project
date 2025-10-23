@@ -13,8 +13,8 @@ def handle_sigtstp(signum, frame):
     print("\n[!] Stop signal received")
 
 
-signal.signal(signal.SIGINT, handle_sigint)
-signal.signal(signal.SIGTSTP, handle_sigtstp)
+if hasattr(signal, "SIGTSTP"):
+    signal.signal(signal.SIGTSTP, handle_sigtstp)
 def setup_signals():
     signal.signal(signal.SIGINT, handle_sigint)
     if hasattr(signal,'SIGTSTP'):
