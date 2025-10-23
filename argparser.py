@@ -14,6 +14,10 @@ def build_parser():
     cd_parser.add_argument("path", help="Path to change to")
     cd_parser.set_defaults(func=commands.change_directory)
 
+    # pwd
+    pwd_parser = subparsers.add_parser("pwd", help="Print current working directory")
+    pwd_parser.set_defaults(func=commands.print_working_directory)
+
     # exit
     exit_parser = subparsers.add_parser("exit", help="Exit the shell")
     exit_parser.set_defaults(func=commands.exit_shell)
@@ -36,24 +40,41 @@ def build_parser():
     mv_parser.set_defaults(func=commands.move_file)
 
     # rm
-    rm_parser = subparsers.add_parser("rm", help="Delete a file")
-    rm_parser.add_argument("filename", help="File to delete")
-    rm_parser.set_defaults(func=commands.delete_file)
+    rm_parser = subparsers.add_parser("rm", help="Delete a file or directory recursively")
+    rm_parser.add_argument("path", help="File or directory to delete")
+    rm_parser.set_defaults(func=commands.remove)
 
     # run
-    run_parser = subparsers.add_parser("run", help="executes files and programs")
-    run_parser.add_argument("path", help = "path to file")
+    run_parser = subparsers.add_parser("run", help="Executes files and programs")
+    run_parser.add_argument("path", help="Path to file")
+    run_parser.add_argument("args", nargs=argparse.REMAINDER, help="Arguments for the program")
     run_parser.set_defaults(func=commands.run_file)
 
-    #make dir
-    mkdir_parser = subparsers.add_parser("mkdir", help = "makes a directory ")
-    mkdir_parser.add_argument("path", help = "path to place to create dir")
-    mkdir_parser.set_defaults(func= commands.make_directory)
+    # mkdir
+    mkdir_parser = subparsers.add_parser("mkdir", help="Makes a directory")
+    mkdir_parser.add_argument("path", help="Path where directory will be created")
+    mkdir_parser.set_defaults(func=commands.make_directory)
 
-    #create file
-    crf_parser = subparsers.add_parser("crf", help = "makes an empty file")
-    crf_parser.add_argument("path", help= "path where file is created")
+    # create file
+    crf_parser = subparsers.add_parser("crf", help="Makes an empty file")
+    crf_parser.add_argument("path", help="Path where file will be created")
     crf_parser.set_defaults(func=commands.create_file)
 
+    # cat
+    cat_parser = subparsers.add_parser("cat", help="Display file content")
+    cat_parser.add_argument("path", help="File to display")
+    cat_parser.set_defaults(func=commands.cat_file)
+
+    # head
+    head_parser = subparsers.add_parser("head", help="Display first N lines of a file")
+    head_parser.add_argument("path", help="File to display")
+    head_parser.add_argument("-n", type=int, default=10, help="Number of lines to show (default 10)")
+    head_parser.set_defaults(func=commands.head_file)
+
+    # tail
+    tail_parser = subparsers.add_parser("tail", help="Display last N lines of a file")
+    tail_parser.add_argument("path", help="File to display")
+    tail_parser.add_argument("-n", type=int, default=10, help="Number of lines to show (default 10)")
+    tail_parser.set_defaults(func=commands.tail_file)
 
     return parser

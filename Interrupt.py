@@ -15,7 +15,10 @@ def handle_sigtstp(signum, frame):
 
 signal.signal(signal.SIGINT, handle_sigint)
 signal.signal(signal.SIGTSTP, handle_sigtstp)
-
+def setup_signals():
+    signal.signal(signal.SIGINT, handle_sigint)
+    if hasattr(signal,'SIGTSTP'):
+        signal.signal(signal.SIGTSTP,handle_sigtstp)
 
 def run_command(cmd):
     try:
@@ -26,17 +29,17 @@ def run_command(cmd):
 
 def run_command(cmd):
     try:
-        process = subprocess.Popen(
-            cmd,
-            shell=True,
-            preexec_fn=os.setpgrp  # Create new process group
-        )
+        preexec = os.setpgrp if hasattr(os, "setpgrp") else None
+        process = subprocess.Popen(cmd, shell=True, preexec_fn=preexec)
         process.wait()
     except KeyboardInterrupt:
-        # Send sigint to the child process group
-        os.killpg(os.getpgid(process.pid), signal.SIGINT)
+        # Send SIGINT to the child process group (Unix)
+        if hasattr(os, "killpg") and preexec:
+            os.killpg(os.getpgid(process.pid), signal.SIGINT)
+        else:
+            process.terminate()
 
-
+'''
 #Test loop
 def main():
     signal.signal(signal.SIGINT, handle_sigint)
@@ -56,3 +59,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+'''

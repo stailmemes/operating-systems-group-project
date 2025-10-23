@@ -99,3 +99,82 @@ def run_file(args):
         return
 
     subprocess.run(args.path + args.args, shell=True)
+
+def remove(args):
+    path = args.path
+    if not os.path.exists(path):
+        PrintFormatter.errorPrint(f"{path}: No such file or directory")
+        return
+
+    # If it's a directory, delete recursively
+    if os.path.isdir(path):
+        try:
+            shutil.rmtree(path)
+            PrintFormatter.Green_Output(f"Directory {path} removed")
+        except PermissionError:
+            PrintFormatter.errorPrint(f"Permission denied: {path}")
+        except Exception as e:
+            PrintFormatter.errorPrint(f"Error removing directory {path}: {e}")
+    else:
+        # It's a file, delete normally
+        try:
+            os.remove(path)
+            PrintFormatter.Green_Output(f"File {path} removed")
+        except PermissionError:
+            PrintFormatter.errorPrint(f"Permission denied: {path}")
+        except Exception as e:
+            PrintFormatter.errorPrint(f"Error removing file {path}: {e}")
+
+def cat_file(args):
+    path = args.path
+    if not os.path.exists(path):
+        PrintFormatter.errorPrint(f"{path}: No such file")
+        return
+
+    if os.path.isdir(path):
+        PrintFormatter.errorPrint(f"{path} is a directory")
+        return
+
+    try:
+        with open(path, "r") as f:
+            for line in f:
+                print(line.rstrip())
+    except PermissionError:
+        PrintFormatter.errorPrint(f"Permission denied: {path}")
+    except Exception as e:
+        PrintFormatter.errorPrint(f"Error reading file {path}: {e}")
+
+
+def print_working_directory(args):
+    cwd = os.getcwd()
+    PrintFormatter.Blue_Output(cwd)  # Using your colored output
+    return cwd
+
+def head_file(args):
+    path = args.path
+    n = args.n
+    if not os.path.exists(path) or os.path.isdir(path):
+        PrintFormatter.errorPrint(f"{path} is invalid")
+        return
+    try:
+        with open(path, "r") as f:
+            for i, line in enumerate(f):
+                if i >= n:
+                    break
+                print(line.rstrip())
+    except Exception as e:
+        PrintFormatter.errorPrint(f"Error reading file {path}: {e}")
+
+def tail_file(args):
+    path = args.path
+    n = args.n
+    if not os.path.exists(path) or os.path.isdir(path):
+        PrintFormatter.errorPrint(f"{path} is invalid")
+        return
+    try:
+        with open(path, "r") as f:
+            lines = f.readlines()
+            for line in lines[-n:]:
+                print(line.rstrip())
+    except Exception as e:
+        PrintFormatter.errorPrint(f"Error reading file {path}: {e}")

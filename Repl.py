@@ -4,7 +4,7 @@ import os, shlex, sys
 import commands as com
 import argparser
 import PrintFormatter as PF
-
+import Interrupt
 # externals + output helpers
 from external_runner import run_external            # (code/exit/stdout/stderr)
 #from output_utils   import write_stdout, write_stderr, report_exit
@@ -106,11 +106,12 @@ def Repl_loop(script_file =None):
             continue
 
         # ---------- external command path ----------
-        code, out, err = run_external(argv, capture=True)
+        Interrupt.run_command(argv)
         #write_stdout(out)               # normal output
         #write_stderr(err)               # error output
         last_status = code              # available if you want in the prompt
         # report_exit                   # uncomment if you want "[exit N]" after each run
 
 if __name__ == "__main__":
+    Interrupt.setup_signals()
     Repl_loop()
