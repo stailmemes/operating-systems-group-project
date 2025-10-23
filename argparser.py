@@ -24,10 +24,6 @@ def build_parser():
     pwd_parser = subparsers.add_parser("pwd", help="Print current working directory")
     pwd_parser.set_defaults(func=commands.print_working_directory)
 
-    # exit
-    exit_parser = subparsers.add_parser("exit", help="Exit the shell")
-    exit_parser.set_defaults(func=commands.exit_shell)
-
     # echo
     echo_parser = subparsers.add_parser("echo", help="Print text")
     echo_parser.add_argument("text", nargs="+", help="Text to print")

@@ -17,7 +17,7 @@ from prompt_toolkit.completion import WordCompleter
 # Keep this in sync with argparser.build_parser()
 BUILTINS = {
     "ls", "cd", "pwd", "exit", "echo", "cp", "mv", "rm",
-    "mkdir", "crf", "run", "help"
+    "mkdir", "crf", "run", "help","cat","tail","head"
 }
 session = PromptSession(
     history = FileHistory('.myossh_history'),
@@ -54,17 +54,18 @@ def process_line(line, parses, history):
             PF.errorPrint(f"builtin error: {e}")
         return
 
-def Repl_loop(script_file =None):
+def Repl_loop(script_file=None):
     parses = argparser.build_parser()
     last_status = 0
 
     if script_file:
-        with open(script_file,"r") as f:
+        with open(script_file, "r") as f:
             lines = [line.rstrip("\n") for line in f]
         for line in lines:
-            print(prompt()+line)
-            process_line(line,parses,history)
+            print(prompt() + line)
+            process_line(line, parses, [])
         return
+
 
     while True:
         try:
@@ -95,12 +96,15 @@ def Repl_loop(script_file =None):
             try:
                 args = parses.parse_args(argv)
                 if hasattr(args, "func"):
-                    args.func(args)     # dispatch to commands.py
+                    # Handle 'exit' explicitly
+                    if cmd == "exit":
+                        print("Exiting shell")
+                        sys.exit(0)
+                    args.func(args)
                 else:
                     PF.errorPrint("Unknown command!")
             except SystemExit:
-                # argparse threw Keep REPL going
-                continue
+                break  # stop REPL instead of continuing
             except Exception as e:
                 PF.errorPrint(f"builtin error: {e}")
             continue
@@ -113,5 +117,6 @@ def Repl_loop(script_file =None):
         # report_exit                   # uncomment if you want "[exit N]" after each run
 
 if __name__ == "__main__":
+    script_file = sys.argv[1] if len(sys.argv) > 1 else None
     Interrupt.setup_signals()
     Repl_loop()
