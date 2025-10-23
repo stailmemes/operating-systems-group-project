@@ -63,9 +63,27 @@ def Repl_loop(script_file=None):
             lines = [line.rstrip("\n") for line in f]
         for line in lines:
             print(prompt() + line)
-            process_line(line, parses, [])
-        return
+            try:
+                argv = shlex.split(line)
+            except ValueError as e:
+                PF.errorPrint(f"parse error: {e}")
+                continue
 
+            cmd = argv[0]
+            if cmd in BUILTINS:
+                try:
+                    args = parses.parse_args(argv)
+                    if hasattr(args, "func"):
+                        args.func(args)
+                except SystemExit:
+                    continue
+                continue
+
+            code, out, err = run_external(argv, capture=True)
+            if out:
+                print(out)
+            if err:
+                print(err, file=sys.stderr)
 
     while True:
         try:
@@ -119,4 +137,4 @@ def Repl_loop(script_file=None):
 if __name__ == "__main__":
     script_file = sys.argv[1] if len(sys.argv) > 1 else None
     Interrupt.setup_signals()
-    Repl_loop()
+    Repl_loop(script_file)
