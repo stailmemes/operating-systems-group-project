@@ -32,7 +32,7 @@ def run_external(argv: list[str], *, capture: bool = False) -> Tuple[int, str, s
     except FileNotFoundError:
         return NOT_FOUND, "", f"{argv[0]}: no such file or directory\n"
 
-Background hook to add soon
+# Background hook to add soon
 def start_background(argv: list[str]) -> subprocess.Popen:
     """Non-blocking run; caller manages job table & output."""
     exe = resolve_executable(argv[0])
