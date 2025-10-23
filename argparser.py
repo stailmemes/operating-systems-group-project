@@ -1,5 +1,6 @@
 import argparse
 import commands
+import os
 
 def build_parser():
     parser = argparse.ArgumentParser(prog="my-shell", description="OS Shell Simulator")
@@ -11,7 +12,12 @@ def build_parser():
 
     # cd
     cd_parser = subparsers.add_parser("cd", help="Change directory")
-    cd_parser.add_argument("path", help="Path to change to")
+    cd_parser.add_argument(
+        "path",
+        nargs="?",  # makes it optional
+        default=os.path.expanduser("~"),  # default to home directory
+        help="Path to change to"
+    )
     cd_parser.set_defaults(func=commands.change_directory)
 
     # pwd

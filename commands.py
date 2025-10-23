@@ -41,14 +41,19 @@ def list_directory(args):
 
 
 # Change the current directory
+
 def change_directory(args):
-    # Try to change directory the desired path
     try:
-        os.chdir(args.path)
+        # Expand ~ to home and make absolute path
+        path = os.path.abspath(os.path.expanduser(args.path))
+        os.chdir(path)
         print(f"Changed directory to {os.getcwd()}")
-    # Gives an error message if the path does not exist
     except FileNotFoundError:
-        print(f"Directory {args.path} does not exist")
+        PF.errorPrint(f"Directory {args.path} does not exist")
+    except NotADirectoryError:
+        PF.errorPrint(f"{args.path} is not a directory")
+    except PermissionError:
+        PF.errorPrint(f"Permission denied: {args.path}")
 
 
 # Exits the shell
