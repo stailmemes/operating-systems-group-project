@@ -5,27 +5,35 @@ import PrintFormatter
 import subprocess
 
 
-
+# Creates file with error handling (file created is color coded)
 def create_file(args):
-    path =args.path
-    with open(path,"w") as f:
-        pass
+    path = args.path
+    try:
+        with open(path,"w") as f:
+            pass
+        PrintFormatter.Green_Output(f"File '{path}' created!")
+    except PermissionError:
+        PrintFormatter.errorPrint(f"Permission denied: {path}")
+    except Exception as e:
+        PrintFormatter.errorPrint(f"Error creating file: {e}")
 
 def make_directory(args):
     path =args.path
     try:
         os.mkdir(path)
+        PrintFormatter.Green_Output(f"Directory '{path}' created!")
     except FileExistsError:
-        PrintFormatter.errorPrint("dir already exists!")
+        PrintFormatter.errorPrint(f"dir '{path}'  already exists!")
     except FileNotFoundError:
         PrintFormatter.errorPrint("parent dir does not exist")
         DirCreateInput = PrintFormatter.CInput("Would you like to make the parent dir? y/n")
-        if DirCreateInput in ("y", "yes", "Y", "YES", "Yes"):
+        if DirCreateInput.lower() in ("y", "yes"):
             try:
                 os.makedirs(path)
-            except FileExistsError:
-                PrintFormatter.errorPrint("Parent dir does exist?")
-        elif DirCreateInput in ("n", "no", "N", "NO", "No"):
+                PrintFormatter.Green_Output(f"Directory '{path}' created!")
+            except Exception as e:
+                PrintFormatter.errorPrint(f"Erro creating directory: {e}")
+        elif DirCreateInput.lower() in ("n", "no"):
             return
         else:
             return
@@ -34,10 +42,18 @@ def make_directory(args):
 
 # Lists files in the current directory
 def list_directory(args):
-    files = os.listdir(os.getcwd())
-    PrintFormatter.Blue_Output(os.getcwd() + "  <- current directory")
-    for file in files:
-        PrintFormatter.Green_Output(file)
+    path = os.getcwd()
+    try:
+        files = os.listdir(os.getcwd())
+        PrintFormatter.Blue_Output(f"{path} <- current directory")
+        for f in files:
+            if os.path.isdir(os.path.join(path, f)):
+                PrintFormatter.Green_Output(f"{f}/")
+            else:
+                print(f)
+    except PermissionError:
+        PrintFormatter.errorPrint(f"Permission denied: {path}")
+
 
 
 # Change the current directory
@@ -83,10 +99,10 @@ def move_file(args):
 # Deletes a file
 def delete_file(args):
     try:
-        os.remove(args.filename)
-        print(f"Deleted {args.filename}")
+        os.remove(args.path)
+        print(f"Deleted {args.path}")
     except FileNotFoundError:
-        print(f"File {args.filename} does not exist")
+        print(f"File {args.path} does not exist")
     except Exception as e:
         print(f"Error deleting file: {e}")
 
@@ -98,7 +114,13 @@ def run_file(args):
         PrintFormatter.errorPrint(f"{path}: this file does not exist")
         return
 
-    subprocess.run(args.path + args.args, shell=True)
+    cmd = " ".join([path] + args.args)
+    try:
+        subprocess.run(cmd, shell=True)
+    except PermissionError:
+        PrintFormatter.errorPrint(f"Permission denied: {path} ")
+    except Exception as e:
+        PrintFormatter.errorPrint(f"Error executing {path}: {e}")
 
 def remove(args):
     path = args.path

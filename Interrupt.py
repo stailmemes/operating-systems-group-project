@@ -3,41 +3,63 @@ import signal
 import sys
 import subprocess
 
-#Interrupt function
+# Track the current foreground process
+current_process = None
+
+#Interrupt function (handles Ctrl+C)
 def handle_sigint(signum, frame):
-    print("\n[!] Interrupt received")
-    print("Type 'exit' to quit the shell.")
+    global current_process
+    if current_process and current_process.poll() is None:
+        # Send interrupt to child process
+        try:
+            os.kilpg(os.getpgid(current_process.pid), signal.SIGINT)
+        except Exception:
+            pass
+        print("\n[!] Process Interrupted.")
+    else:
+        print("\n[!] Interrupt received - Type 'exit' to quit the shell.")
 
-#Stop function
+#Stop function (Handles Ctrl+Z)
 def handle_sigtstp(signum, frame):
-    print("\n[!] Stop signal received")
+    global current_process
+    if current_process and current_process.poll() is None:
+        try:
+            os.killpg(os.getpgid(current_process.pid), signal.SIGTSTP)
+            print(f"\n [!] Process {current_process.pid} has been suspended.")
+        except Exception:
+            print("\n [!] Unable to suspend process.")
+    else:
+        print("\n[!] No process available to suspend.")
 
-
-if hasattr(signal, "SIGTSTP"):
-    signal.signal(signal.SIGTSTP, handle_sigtstp)
+# Set up signal handlers
 def setup_signals():
     signal.signal(signal.SIGINT, handle_sigint)
     if hasattr(signal,'SIGTSTP'):
         signal.signal(signal.SIGTSTP,handle_sigtstp)
 
-def run_command(cmd):
+#Runs a command
+def run_command(argv, background = False):
+    global current_process
     try:
-        process = subprocess.Popen(cmd, shell=True)
-        process.wait()
+        # Start the process in its own group
+        preexec = os.setpgrp if hasattr(os, "setpgrp") else None
+        current_process = subprocess.Popen(argv, preexec_fn=preexec)
+        if background:
+            print(f"[+] Background process {current_process.pid} started")
+            return current_process
+
+        # Foreground process must wait
+        current_process.wait()
+
+    except KeyboardInterrupt:
+        # Handled by signal
+        pass
+
     except Exception as e:
         print(f"Error running command: {e}")
 
-def run_command(cmd):
-    try:
-        preexec = os.setpgrp if hasattr(os, "setpgrp") else None
-        process = subprocess.Popen(cmd, shell=True, preexec_fn=preexec)
-        process.wait()
-    except KeyboardInterrupt:
-        # Send SIGINT to the child process group (Unix)
-        if hasattr(os, "killpg") and preexec:
-            os.killpg(os.getpgid(process.pid), signal.SIGINT)
-        else:
-            process.terminate()
+    finally:
+        current_process = None
 
 '''
 #Test loop
