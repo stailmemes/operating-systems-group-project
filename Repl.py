@@ -443,3 +443,20 @@ def Repl_loop(script_file=None):
             PF.errorPrint(f"error: {e}")
             last_status = 1
 
+if __name__ == "__main__":
+    # Set up Ctrl+C / Ctrl+Z handlers
+    Interrupt.setup_signals()
+
+    # Detect if a script file was passed
+    script_file = sys.argv[1] if len(sys.argv) > 1 else None
+
+    try:
+        # Start the interactive shell or run a script
+        Repl_loop(script_file)
+    except KeyboardInterrupt:
+        PF.errorPrint("\n[!] KeyboardInterrupt — use 'exit' to quit cleanly.")
+    except SystemExit:
+        # Allow built-in exit command
+        pass
+    except Exception as e:
+        PF.errorPrint(f"[!] Fatal error: {e}")
