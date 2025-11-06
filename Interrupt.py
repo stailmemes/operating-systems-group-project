@@ -12,7 +12,7 @@ def handle_sigint(signum, frame):
     if current_process and current_process.poll() is None:
         # Send interrupt to child process
         try:
-            os.kilpg(os.getpgid(current_process.pid), signal.SIGINT)
+            os.killpg(os.getpgid(current_process.pid), signal.SIGINT)
         except Exception:
             pass
         print("\n[!] Process Interrupted.")
