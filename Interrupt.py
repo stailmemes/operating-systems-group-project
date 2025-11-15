@@ -1,65 +1,75 @@
+# Interrupt.py — JobControl Compatible Signal Handling
+
 import os
 import signal
-import sys
-import subprocess
+import process_subsystem
 
-# Track the current foreground process
-current_process = None
+# JobControl instance is created in repl.py, not here.
+# We only store a reference once repl.py gives it to us.
+JOBCTL = None
 
-#Interrupt function (handles Ctrl+C)
+def bind_jobctl(jobctl_obj):
+    """
+    repl.py must call this once:
+        Interrupt.bind_jobctl(JOBCTL)
+    so the interrupt handlers know which job is foreground.
+    """
+    global JOBCTL
+    JOBCTL = jobctl_obj
+
+
+# -----------------------------
+#   SIGINT  (Ctrl-C)
+# -----------------------------
 def handle_sigint(signum, frame):
-    global current_process
-    if current_process and current_process.poll() is None:
-        # Send interrupt to child process
-        try:
-            os.killpg(os.getpgid(current_process.pid), signal.SIGINT)
-        except Exception:
-            pass
-        print("\n[!] Process Interrupted.")
-    else:
-        print("\n[!] Interrupt received - Type 'exit' to quit the shell.")
+    if JOBCTL is None:
+        print("\n[!] Interrupt — JobControl not initialized.")
+        return
 
-#Stop function (Handles Ctrl+Z)
-def handle_sigtstp(signum, frame):
-    global current_process
-    if current_process and current_process.poll() is None:
-        try:
-            os.killpg(os.getpgid(current_process.pid), signal.SIGTSTP)
-            print(f"\n [!] Process {current_process.pid} has been suspended.")
-        except Exception:
-            print("\n [!] Unable to suspend process.")
-    else:
-        print("\n[!] No process available to suspend.")
+    fg = JOBCTL.get_foreground_job()
 
-# Set up signal handlers
-def setup_signals():
-    signal.signal(signal.SIGINT, handle_sigint)
-    if hasattr(signal,'SIGTSTP'):
-        signal.signal(signal.SIGTSTP,handle_sigtstp)
+    if fg is None:
+        print("\n[!] Interrupt — no foreground job.")
+        return
 
-#Runs a command
-def run_command(argv, background = False):
-    global current_process
     try:
-        # Start the process in its own group
-        preexec = os.setpgrp if hasattr(os, "setpgrp") else None
-        current_process = subprocess.Popen(argv, preexec_fn=preexec)
-        if background:
-            print(f"[+] Background process {current_process.pid} started")
-            return current_process
+        os.killpg(fg.pgid, signal.SIGINT)
+        print(f"\n[!] Process {fg.pid} interrupted.")
+    except Exception:
+        print("\n[!] Failed to interrupt process.")
 
-        # Foreground process must wait
-        current_process.wait()
 
-    except KeyboardInterrupt:
-        # Handled by signal
-        pass
+# -----------------------------
+#   SIGTSTP  (Ctrl-Z)
+# -----------------------------
+def handle_sigtstp(signum, frame):
+    if JOBCTL is None:
+        print("\n[!] Suspend — JobControl not initialized.")
+        return
 
-    except Exception as e:
-        print(f"Error running command: {e}")
+    fg = JOBCTL.get_foreground_job()
 
-    finally:
-        current_process = None
+    if fg is None:
+        print("\n[!] No foreground job to suspend.")
+        return
+
+    try:
+        os.killpg(fg.pgid, signal.SIGTSTP)
+        JOBCTL.mark_stopped(fg.jid)
+        print(f"\n[!] Suspended job {fg.jid}: {fg.command}")
+    except Exception:
+        print("\n[!] Failed to suspend process.")
+
+
+# -----------------------------
+#   SETUP
+# -----------------------------
+def setup_signals():
+    # Shell ignores Ctrl-C & Ctrl-Z itself; handlers forward signals to children.
+    signal.signal(signal.SIGINT, handle_sigint)
+
+    if hasattr(signal, "SIGTSTP"):  # Windows does not have SIGTSTP
+        signal.signal(signal.SIGTSTP, handle_sigtstp)
 
 '''
 #Test loop
