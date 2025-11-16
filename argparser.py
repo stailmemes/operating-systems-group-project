@@ -2,153 +2,107 @@
 import argparse
 import os
 import commands
-import process_subsystem
-
-# JobControl instance (same interface as REPL will use)
-# REPL also creates one, but this is needed so argparser can bind functions
-JOBCTL = process_subsystem.JobControl(print_fn=print)
-
+from process_subsystem import JOBCTL
 
 def build_parser():
-    parser = argparse.ArgumentParser(
-        prog="my-shell",
-        description="Custom OS Shell Simulator"
-    )
+    parser = argparse.ArgumentParser(prog="my-shell")
+    subs = parser.add_subparsers(dest="command")
 
-    subparsers = parser.add_subparsers(dest="command")
+    subs.add_parser("ls").set_defaults(func=commands.list_directory)
 
-    # --------------------------------------------------------
-    # Standard FS commands
-    # --------------------------------------------------------
+    cd = subs.add_parser("cd")
+    cd.add_argument("path", nargs="?", default=os.path.expanduser("~"))
+    cd.set_defaults(func=commands.change_directory)
 
-    # ls
-    p = subparsers.add_parser("ls", help="List directory contents")
-    p.set_defaults(func=commands.list_directory)
+    subs.add_parser("pwd").set_defaults(func=commands.print_working_directory)
 
-    # cd
-    p = subparsers.add_parser("cd", help="Change directory")
-    p.add_argument(
-        "path",
-        nargs="?",
-        default=os.path.expanduser("~"),
-        help="Path to change to"
-    )
-    p.set_defaults(func=commands.change_directory)
+    echo = subs.add_parser("echo")
+    echo.add_argument("text", nargs="+")
+    echo.set_defaults(func=commands.echo)
 
-    # pwd
-    p = subparsers.add_parser("pwd", help="Print working directory")
-    p.set_defaults(func=commands.print_working_directory)
+    cp = subs.add_parser("cp")
+    cp.add_argument("source")
+    cp.add_argument("destination")
+    cp.set_defaults(func=commands.copy_file)
 
-    # echo
-    p = subparsers.add_parser("echo", help="Print text")
-    p.add_argument("text", nargs="+")
-    p.set_defaults(func=commands.echo)
+    mv = subs.add_parser("mv")
+    mv.add_argument("source")
+    mv.add_argument("destination")
+    mv.set_defaults(func=commands.move_file)
 
-    # cp
-    p = subparsers.add_parser("cp", help="Copy a file")
-    p.add_argument("source")
-    p.add_argument("destination")
-    p.set_defaults(func=commands.copy_file)
+    rm = subs.add_parser("rm")
+    rm.add_argument("path")
+    rm.set_defaults(func=commands.remove)
 
-    # mv
-    p = subparsers.add_parser("mv", help="Move a file")
-    p.add_argument("source")
-    p.add_argument("destination")
-    p.set_defaults(func=commands.move_file)
+    mkdir = subs.add_parser("mkdir")
+    mkdir.add_argument("path")
+    mkdir.set_defaults(func=commands.make_directory)
 
-    # rm
-    p = subparsers.add_parser("rm", help="Delete file or directory")
-    p.add_argument("path")
-    p.set_defaults(func=commands.remove)
+    crf = subs.add_parser("crf")
+    crf.add_argument("path")
+    crf.set_defaults(func=commands.create_file)
 
-    # mkdir
-    p = subparsers.add_parser("mkdir", help="Create directory")
-    p.add_argument("path")
-    p.set_defaults(func=commands.make_directory)
+    run = subs.add_parser("run")
+    run.add_argument("path")
+    run.add_argument("args", nargs=argparse.REMAINDER)
+    run.set_defaults(func=commands.run_file)
 
-    # crf (create file)
-    p = subparsers.add_parser("crf", help="Create empty file")
-    p.add_argument("path")
-    p.set_defaults(func=commands.create_file)
+    cat = subs.add_parser("cat")
+    cat.add_argument("path")
+    cat.set_defaults(func=commands.cat_file)
 
-    # cat
-    p = subparsers.add_parser("cat", help="Display file contents")
-    p.add_argument("path")
-    p.set_defaults(func=commands.cat_file)
+    head = subs.add_parser("head")
+    head.add_argument("path")
+    head.add_argument("-n", type=int, default=10)
+    head.set_defaults(func=commands.head_file)
 
-    # head
-    p = subparsers.add_parser("head", help="Show first N lines")
-    p.add_argument("path")
-    p.add_argument("-n", type=int, default=10)
-    p.set_defaults(func=commands.head_file)
+    tail = subs.add_parser("tail")
+    tail.add_argument("path")
+    tail.add_argument("-n", type=int, default=10)
+    tail.set_defaults(func=commands.tail_file)
 
-    # tail
-    p = subparsers.add_parser("tail", help="Show last N lines")
-    p.add_argument("path")
-    p.add_argument("-n", type=int, default=10)
-    p.set_defaults(func=commands.tail_file)
+    alias = subs.add_parser("alias")
+    alias.add_argument("definition")
+    alias.set_defaults(func=commands.alias_command)
 
-    # run
-    p = subparsers.add_parser("run", help="Run program or script")
-    p.add_argument("path")
-    p.add_argument("args", nargs=argparse.REMAINDER)
-    p.set_defaults(func=commands.run_file)
+    unalias = subs.add_parser("unalias")
+    unalias.add_argument("name")
+    unalias.set_defaults(func=commands.unalias_command)
 
-    # --------------------------------------------------------
-    # Alias system
-    # --------------------------------------------------------
+    export = subs.add_parser("export")
+    export.add_argument("assignment")
+    export.set_defaults(func=commands.export_var)
 
-    p = subparsers.add_parser("alias", help="Create an alias")
-    p.add_argument("definition", help='Format: name="value"')
-    p.set_defaults(func=commands.alias_command)
+    sleep = subs.add_parser("sleep", help="Sleep for N seconds")
+    sleep.add_argument("seconds")
+    sleep.add_argument("--background", "-b", action="store_true",
+                       help="Run in background (internal)")
+    sleep.set_defaults(func=commands.sleep_command)
 
-    p = subparsers.add_parser("unalias", help="Remove an alias")
-    p.add_argument("name")
-    p.set_defaults(func=commands.unalias_command)
+    # Job control
+    jobs = subs.add_parser("jobs")
+    jobs.set_defaults(func=lambda args: JOBCTL.jobs_list())
 
-    # --------------------------------------------------------
-    # Environment variables
-    # --------------------------------------------------------
+    ps = subs.add_parser("ps")
+    ps.add_argument("--active", action="store_true")
+    ps.set_defaults(func=lambda args: JOBCTL.ps(active_only=args.active))
 
-    p = subparsers.add_parser("export", help="Set environment variable")
-    p.add_argument("definition", help='Format: VAR=value')
-    p.set_defaults(func=commands.export_var)
+    fg = subs.add_parser("fg")
+    fg.add_argument("jid", type=int)
+    fg.set_defaults(func=lambda args: JOBCTL.fg(args.jid))
 
-    # --------------------------------------------------------
-    # Job control builtins
-    # --------------------------------------------------------
+    bg = subs.add_parser("bg")
+    bg.add_argument("jid", type=int)
+    bg.set_defaults(func=lambda args: JOBCTL.bg(args.jid))
 
-    # jobs
-    p = subparsers.add_parser("jobs", help="List jobs")
-    p.set_defaults(func=lambda args: JOBCTL.jobs_list())
+    stop = subs.add_parser("stop")
+    stop.add_argument("jid", type=int)
+    stop.set_defaults(func=lambda args: JOBCTL.stop(args.jid))
 
-    # ps
-    p = subparsers.add_parser("ps", help="Show processes")
-    p.add_argument("--active", action="store_true")
-    p.set_defaults(func=lambda args: JOBCTL.ps(active_only=args.active))
-
-    # fg
-    p = subparsers.add_parser("fg", help="Bring job to foreground")
-    p.add_argument("jid", type=int)
-    p.set_defaults(func=lambda args: JOBCTL.fg(args.jid))
-
-    # bg
-    p = subparsers.add_parser("bg", help="Resume job in background")
-    p.add_argument("jid", type=int)
-    p.set_defaults(func=lambda args: JOBCTL.bg(args.jid))
-
-    # stop
-    p = subparsers.add_parser("stop", help="Stop/suspend a job")
-    p.add_argument("jid", type=int)
-    p.set_defaults(func=lambda args: JOBCTL.stop(args.jid))
-
-    # kill
-    p = subparsers.add_parser("kill", help="Send signal to job")
-    p.add_argument("jid", type=int)
-    p.add_argument("-s", "--signal", type=int, default=15)
-    p.set_defaults(func=lambda args: JOBCTL.kill(args.jid, args.signal))
+    kill = subs.add_parser("kill")
+    kill.add_argument("jid", type=int)
+    kill.add_argument("--signal", "-s", type=int, default=15)
+    kill.set_defaults(func=lambda args: JOBCTL.kill(args.jid, args.signal))
 
     return parser
-
-
 

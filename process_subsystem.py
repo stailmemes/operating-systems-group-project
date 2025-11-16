@@ -1,239 +1,277 @@
 # process_subsystem.py
 import os
-import signal
 import subprocess
-import shutil
+import signal
 import threading
+import time
+from typing import Optional, Dict
 
-
-# ============================================================
-# Job Structure
-# ============================================================
-
+# Cross-platform JobControl with process-group (POSIX) and CREATE_NEW_PROCESS_GROUP (Windows)
 class Job:
-    def __init__(self, jid, process, command, background):
+    def __init__(self, jid: int, proc: subprocess.Popen, cmd: str, background: bool):
         self.jid = jid
-        self.process = process
-        self.command = command
+        self.proc = proc
+        self.cmd = cmd
         self.background = background
         self.stopped = False
-
-
-# ============================================================
-# Job Control System
-# ============================================================
+        self.start_time = time.time()
+        self.end_time: Optional[float] = None
+        self.exit_code: Optional[int] = None
 
 class JobControl:
     def __init__(self, print_fn=print):
         self.print = print_fn
-        self.jobs = {}
+        self.jobs: Dict[int, Job] = {}
         self.next_jid = 1
-        self.lock = threading.Lock()
-        self.current_fg = None  # foreground job
+        self.lock = threading.RLock()
+        self.current_fg: Optional[Job] = None
 
-    # ---------------------------------------------------------
-    # COMMAND RESOLUTION (Windows-friendly)
-    # ---------------------------------------------------------
-    def _resolve_command(self, argv):
-        """
-        Windows cannot execute script files directly, so we must:
-        - map .py → python file.py
-        - map files with no extension → search PATHEXT
-        - try .py automatically if exists
-        """
+        # Register SIGCHLD handler on POSIX to reap children
+        if hasattr(signal, "SIGCHLD"):
+            try:
+                signal.signal(signal.SIGCHLD, self._sigchld)
+            except Exception:
+                pass
 
+    # platform-aware popen
+    def _popen(self, argv, stdin=None, stdout=None, stderr=None):
+        if os.name == "nt":
+            # Windows: use CREATE_NEW_PROCESS_GROUP
+            creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+            return subprocess.Popen(argv, stdin=stdin, stdout=stdout, stderr=stderr or subprocess.PIPE,
+                                    creationflags=creationflags)
+        else:
+            # POSIX: new process group so we can signal the group
+            return subprocess.Popen(argv, stdin=stdin, stdout=stdout, stderr=stderr or subprocess.PIPE,
+                                    preexec_fn=os.setsid)
+
+    def _resolve_command_for_windows(self, argv):
+        """
+        On Windows, if argv[0] is a script (endswith .py) or doesn't have extension,
+        try to resolve via PATHEXT or run with python interpreter.
+        """
+        import shutil
         cmd = argv[0]
-
-        # Already a full path?
+        # if file exists exactly as given
         if os.path.isfile(cmd):
-            # Python script
             if cmd.endswith(".py"):
-                return ["python", cmd] + argv[1:]
+                return [self._python_cmd(), cmd] + argv[1:]
             return argv
 
-        # No extension, check PATHEXT
+        # has no extension -> try PATHEXT
         if "." not in os.path.basename(cmd):
             pathext = os.getenv("PATHEXT", ".EXE;.BAT;.CMD;.COM;.PY").split(";")
-
-            # Try each extension
             for ext in pathext:
                 candidate = cmd + ext
                 full = shutil.which(candidate)
                 if full:
                     if full.lower().endswith(".py"):
-                        return ["python", full] + argv[1:]
+                        return [self._python_cmd(), full] + argv[1:]
                     return [full] + argv[1:]
-
-            # Try foo.py as fallback
+            # try foo.py
             if os.path.exists(cmd + ".py"):
-                return ["python", cmd + ".py"] + argv[1:]
+                return [self._python_cmd(), cmd + ".py"] + argv[1:]
 
-        # Python script with extension
         if cmd.endswith(".py"):
-            return ["python", cmd] + argv[1:]
+            return [self._python_cmd(), cmd] + argv[1:]
 
-        # If exists somewhere in PATH
+        # else try shutil.which
         full = shutil.which(cmd)
         if full:
             return [full] + argv[1:]
-
-        # Otherwise return unchanged (may error later)
         return argv
 
-    # ---------------------------------------------------------
-    # Platform-specific popen
-    # ---------------------------------------------------------
-    def _popen_platform(self, argv):
+    def _python_cmd(self):
+        # Use the same python executable that's running the shell
+        return os.path.abspath(os.sys.executable)
+
+    def run(self, argv, *, background: bool = False):
+        """
+        Start a new job. Returns pid for background jobs or exit code for foreground.
+        """
+        # On Windows try to resolve script invocation
         if os.name == "nt":
-            # Windows: new process group, no preexec_fn
-            return subprocess.Popen(
-                argv,
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
-            )
-        else:
-            # Linux/Unix: create new process group
-            return subprocess.Popen(
-                argv,
-                preexec_fn=os.setpgrp
-            )
+            argv = self._resolve_command_for_windows(argv)
 
-    # ---------------------------------------------------------
-    # Run a job
-    # ---------------------------------------------------------
-    def run(self, argv, background=False):
-        argv = self._resolve_command(argv)
-        proc = self._popen_platform(argv)
-
-        jid = self.next_jid
-        self.next_jid += 1
-
-        job = Job(jid, proc, " ".join(argv), background)
+        try:
+            proc = self._popen(argv)
+        except FileNotFoundError:
+            raise
+        except Exception as e:
+            raise
 
         with self.lock:
+            jid = self.next_jid
+            self.next_jid += 1
+            job = Job(jid, proc, " ".join(argv), background)
             self.jobs[jid] = job
 
         if background:
-            self.print(f"[{jid}] {proc.pid} started in background")
-            threading.Thread(target=self._watch_job, args=(job,), daemon=True).start()
+            self.print(f"[{jid}] {proc.pid}")
+            # spawn a watcher to reap and announce completion
+            threading.Thread(target=self._watch_background, args=(job,), daemon=True).start()
             return proc.pid
 
-        # Foreground job
+        # foreground: wait, allow Ctrl-C to be handled by parent signal handlers
         self.current_fg = job
-        self._wait_foreground(job)
-        return proc.returncode
-
-    # ---------------------------------------------------------
-    # Foreground waiting
-    # ---------------------------------------------------------
-    def _wait_foreground(self, job):
         try:
-            job.process.wait()
+            rc = proc.wait()
         except KeyboardInterrupt:
-            pass
+            # try to interrupt child group
+            try:
+                if os.name == "nt":
+                    proc.send_signal(signal.CTRL_BREAK_EVENT)
+                else:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGINT)
+            except Exception:
+                pass
+            rc = proc.wait()
         finally:
             self.current_fg = None
-            if job.process.poll() is not None:
-                with self.lock:
-                    self.jobs.pop(job.jid, None)
+            with self.lock:
+                job.end_time = time.time()
+                job.exit_code = rc
+                # remove finished foreground job
+                self.jobs.pop(job.jid, None)
+        return rc
 
-    # ---------------------------------------------------------
-    # Watch background processes
-    # ---------------------------------------------------------
-    def _watch_job(self, job):
-        job.process.wait()
+    def _watch_background(self, job: Job):
+        job.proc.wait()
         with self.lock:
+            job.end_time = time.time()
+            job.exit_code = job.proc.returncode
             if job.jid in self.jobs:
-                self.print(f"\n[{job.jid}] {job.process.pid} finished")
+                self.print(f"\n[{job.jid}] {job.proc.pid} finished")
+                # keep the job entry until user clears/ps shows done; here we remove it
                 del self.jobs[job.jid]
 
-    # ---------------------------------------------------------
-    # Built-in commands
-    # ---------------------------------------------------------
-
+    # job table queries
     def jobs_list(self):
-        for jid, job in self.jobs.items():
-            status = (
-                "Stopped" if job.stopped else
-                ("Running" if job.process.poll() is None else "Done")
-            )
-            self.print(f"[{jid}] {job.process.pid}\t{status}\t{job.command}")
+        with self.lock:
+            for jid, job in sorted(self.jobs.items()):
+                status = "stopped" if job.stopped else ("running" if job.proc.poll() is None else "done")
+                start = time.strftime("%H:%M:%S", time.localtime(job.start_time))
+                end = time.strftime("%H:%M:%S", time.localtime(job.end_time)) if job.end_time else "-"
+                self.print(f"[{jid}] pid={job.proc.pid} {status} start={start} end={end} :: {job.cmd}")
 
-    def ps(self, active_only=False):
-        for jid, job in self.jobs.items():
-            if active_only and job.process.poll() is not None:
-                continue
-            self.print(f"PID {job.process.pid}  CMD {job.command}")
+    def ps(self, active_only: bool = False):
+        with self.lock:
+            for jid, job in sorted(self.jobs.items()):
+                if active_only and job.proc.poll() is not None:
+                    continue
+                status = "stopped" if job.stopped else ("running" if job.proc.poll() is None else "done")
+                self.print(f"{job.proc.pid}\t{status}\t{job.cmd}")
 
-    def fg(self, jid):
-        if jid not in self.jobs:
+    def _find_job(self, jid: int) -> Optional[Job]:
+        with self.lock:
+            return self.jobs.get(jid)
+
+    # control actions
+    def fg(self, jid: int):
+        job = self._find_job(jid)
+        if not job:
             self.print(f"No such job {jid}")
             return
-
-        job = self.jobs[jid]
-        job.background = False
+        # resume if stopped
+        if job.stopped:
+            self._continue_job(job)
+        # bring to foreground: wait on that process
         self.current_fg = job
+        try:
+            rc = job.proc.wait()
+        except KeyboardInterrupt:
+            try:
+                if os.name == "nt":
+                    job.proc.send_signal(signal.CTRL_BREAK_EVENT)
+                else:
+                    os.killpg(os.getpgid(job.proc.pid), signal.SIGINT)
+            except Exception:
+                pass
+            rc = job.proc.wait()
+        finally:
+            self.current_fg = None
+            with self.lock:
+                # remove job after foreground completion
+                if job.jid in self.jobs:
+                    del self.jobs[job.jid]
 
-        # Resume if suspended
-        if job.stopped:
-            if os.name == "nt":
-                self.print("Suspend/resume not supported on Windows.")
-            else:
-                os.killpg(os.getpgid(job.process.pid), signal.SIGCONT)
-            job.stopped = False
-
-        self.print(f"Foregrounding [{jid}] {job.process.pid}")
-        self._wait_foreground(job)
-
-    def bg(self, jid):
-        if jid not in self.jobs:
+    def bg(self, jid: int):
+        job = self._find_job(jid)
+        if not job:
             self.print(f"No such job {jid}")
             return
+        # resume
+        self._continue_job(job)
+        self.print(f"[{job.jid}] {job.proc.pid} continued in background")
+        # ensure watcher thread exists
+        threading.Thread(target=self._watch_background, args=(job,), daemon=True).start()
 
-        job = self.jobs[jid]
-        job.background = True
-
-        if job.stopped:
-            if os.name == "nt":
-                self.print("Suspend/resume not supported on Windows.")
-            else:
-                os.killpg(os.getpgid(job.process.pid), signal.SIGCONT)
-            job.stopped = False
-
-        self.print(f"[{jid}] {job.process.pid} resumed in background")
-        threading.Thread(target=self._watch_job, args=(job,), daemon=True).start()
-
-    def stop(self, jid):
-        if jid not in self.jobs:
+    def stop(self, jid: int):
+        job = self._find_job(jid)
+        if not job:
             self.print(f"No such job {jid}")
             return
-
-        job = self.jobs[jid]
-
         if os.name == "nt":
-            self.print("Stop (SIGTSTP) is not supported on Windows.")
+            self.print("Stop/suspend not supported on Windows.")
             return
+        try:
+            os.killpg(os.getpgid(job.proc.pid), signal.SIGTSTP)
+            job.stopped = True
+            self.print(f"[{job.jid}] {job.proc.pid} stopped")
+        except Exception as e:
+            self.print(f"stop error: {e}")
 
-        os.killpg(os.getpgid(job.process.pid), signal.SIGTSTP)
-        job.stopped = True
-        self.print(f"[{jid}] Stopped")
-
-    def kill(self, jid, sig=15):
-        if jid not in self.jobs:
+    def kill(self, jid: int, sig: int = signal.SIGTERM):
+        job = self._find_job(jid)
+        if not job:
             self.print(f"No such job {jid}")
             return
-
-        job = self.jobs[jid]
-
         try:
             if os.name == "nt":
-                # CTRL_C_EVENT works on console processes
-                if sig == signal.SIGINT:
-                    os.kill(job.process.pid, signal.CTRL_C_EVENT)
-                else:
-                    job.process.terminate()
+                # on windows, we can't send arbitrary POSIX signals; just terminate
+                job.proc.terminate()
             else:
-                os.killpg(os.getpgid(job.process.pid), sig)
-
-            self.print(f"[{jid}] killed")
+                os.killpg(os.getpgid(job.proc.pid), sig)
+            self.print(f"[{job.jid}] signaled {sig}")
         except Exception as e:
-            self.print(f"Kill error: {e}")
+            self.print(f"kill error: {e}")
+
+    def _continue_job(self, job: Job):
+        if os.name == "nt":
+            return
+        try:
+            os.killpg(os.getpgid(job.proc.pid), signal.SIGCONT)
+            job.stopped = False
+        except Exception:
+            pass
+
+    # SIGCHLD handler for POSIX (best-effort)
+    def _sigchld(self, _signum, _frame):
+        # Just reap without blocking
+        try:
+            while True:
+                pid, status = os.waitpid(-1, os.WNOHANG)
+                if pid == 0:
+                    break
+                # find job and update state
+                with self.lock:
+                    for jid, job in list(self.jobs.items()):
+                        if job.proc.pid == pid:
+                            job.end_time = time.time()
+                            if os.WIFEXITED(status):
+                                job.exit_code = os.WEXITSTATUS(status)
+                            elif os.WIFSIGNALED(status):
+                                job.exit_code = -os.WTERMSIG(status)
+                            # remove finished jobs
+                            try:
+                                del self.jobs[jid]
+                            except KeyError:
+                                pass
+        except ChildProcessError:
+            pass
+        except Exception:
+            pass
+
+# Single shared instance exported
+JOBCTL = JobControl()
+
