@@ -1,0 +1,144 @@
+# Simple validator compatible with your shell
+# Writes both expected and actual outputs to validator_log.txt
+
+# Start fresh
+echo "=== SHELL VALIDATOR RUN ===" > validator_log.txt
+echo "Run time: $(date)" >> validator_log.txt 2>/dev/null || echo "date unavailable" >> validator_log.txt
+
+# Helper separator
+echo "" >> validator_log.txt
+echo "---- TEST 1: echo ----" >> validator_log.txt
+echo "EXPECTED: hello" >> validator_log.txt
+echo "ACTUAL:" >> validator_log.txt
+echo hello >> validator_log.txt
+echo "" >> validator_log.txt
+
+echo "---- TEST 2: pwd ----" >> validator_log.txt
+echo "EXPECTED: (non-empty current working directory path)" >> validator_log.txt
+echo "ACTUAL:" >> validator_log.txt
+pwd >> validator_log.txt
+echo "" >> validator_log.txt
+
+echo "---- TEST 3: mkdir / ls / rm ----" >> validator_log.txt
+echo "EXPECTED: directory created then removed" >> validator_log.txt
+echo "ACTUAL:" >> validator_log.txt
+mkdir validator_tmp
+ls >> validator_log.txt
+rm validator_tmp >> validator_log.txt 2>&1 || echo "rm may require -r on directories" >> validator_log.txt
+echo "" >> validator_log.txt
+
+echo "---- TEST 4: cd ----" >> validator_log.txt
+echo "EXPECTED: change into dir and back" >> validator_log.txt
+echo "ACTUAL:" >> validator_log.txt
+mkdir validator_tmp2
+cd validator_tmp2
+pwd >> ../validator_log.txt
+cd ..
+rm -rf validator_tmp2
+echo "" >> validator_log.txt
+
+echo "---- TEST 5: file ops cp/mv ----" >> validator_log.txt
+echo "EXPECTED: file copied and moved" >> validator_log.txt
+echo "ACTUAL:" >> validator_log.txt
+echo sample > a_test.txt
+cp a_test.txt b_test.txt
+ls >> validator_log.txt
+mv b_test.txt c_test.txt
+ls >> validator_log.txt
+rm a_test.txt
+rm c_test.txt
+echo "" >> validator_log.txt
+
+echo "---- TEST 6: cat / head / tail ----" >> validator_log.txt
+echo "EXPECTED: show file contents and head/tail lines" >> validator_log.txt
+echo "ACTUAL:" >> validator_log.txt
+echo 1 > ht.txt
+echo 2 >> ht.txt
+echo 3 >> ht.txt
+echo 4 >> ht.txt
+echo 5 >> ht.txt
+cat ht.txt >> validator_log.txt
+head -n 2 ht.txt >> validator_log.txt
+tail -n 2 ht.txt >> validator_log.txt
+rm ht.txt
+echo "" >> validator_log.txt
+
+echo "---- TEST 7: alias / unalias ----" >> validator_log.txt
+echo "EXPECTED: alias prints replacement, unalias removes it" >> validator_log.txt
+echo "ACTUAL:" >> validator_log.txt
+alias mytestalias="echo ALIAS_OK"
+echo "RUN: mytestalias" >> validator_log.txt
+mytestalias >> validator_log.txt 2>&1 || echo "alias invocation failed" >> validator_log.txt
+unalias mytestalias
+echo "" >> validator_log.txt
+
+echo "---- TEST 8: export / env var usage ----" >> validator_log.txt
+echo "EXPECTED: exported var prints value" >> validator_log.txt
+echo "ACTUAL:" >> validator_log.txt
+export VALIDATOR_VAR=42
+echo $VALIDATOR_VAR >> validator_log.txt
+echo "" >> validator_log.txt
+
+echo "---- TEST 9: redirection (>) and (>>) ----" >> validator_log.txt
+echo "EXPECTED: out.txt contains 'redir_test' and append works" >> validator_log.txt
+echo "ACTUAL:" >> validator_log.txt
+echo redir_test > out.txt
+cat out.txt >> validator_log.txt 2>&1 || echo "cat failed" >> validator_log.txt
+echo appended >> out.txt
+cat out.txt >> validator_log.txt 2>&1
+rm out.txt
+echo "" >> validator_log.txt
+
+echo "---- TEST 10: pipeline with endpoint redirection ----" >> validator_log.txt
+echo "EXPECTED: pipeline output redirected to p_out.txt" >> validator_log.txt
+echo "ACTUAL:" >> validator_log.txt
+echo pipetest | cat > p_out.txt
+cat p_out.txt >> validator_log.txt 2>&1 || echo "p_out cat failed" >> validator_log.txt
+rm p_out.txt
+echo "" >> validator_log.txt
+
+echo "---- TEST 11: background job & jobs listing ----" >> validator_log.txt
+echo "EXPECTED: background job registered and shows in jobs" >> validator_log.txt
+echo "ACTUAL:" >> validator_log.txt
+sleep 3 &
+# short pause to let job register (if your shell needs human pacing, wait a second manually)
+sleep 1
+jobs >> validator_log.txt 2>&1
+echo "Waiting for background to finish (watcher will print completion separately)" >> validator_log.txt
+sleep 4
+echo "" >> validator_log.txt
+
+echo "---- TEST 12: start background then kill it ----" >> validator_log.txt
+echo "EXPECTED: job started then killed / job table updated" >> validator_log.txt
+echo "ACTUAL:" >> validator_log.txt
+sleep 20 &
+sleep 1
+jobs >> validator_log.txt 2>&1
+# attempt to kill the most recent registered job (likely jid shown)
+# (cannot parse job id here—log shows jobs; inspect manually)
+echo "Please note: kill test requires inspecting jobs above and running 'kill <jid>' manually if you want auto-test." >> validator_log.txt
+echo "" >> validator_log.txt
+
+echo "---- TEST 13: run script ----" >> validator_log.txt
+echo "EXPECTED: nested script outputs its line" >> validator_log.txt
+echo 'echo "nested ok"' > nested_validator.mysh
+run nested_validator.mysh >> validator_log.txt 2>&1
+rm nested_validator.mysh
+echo "" >> validator_log.txt
+
+echo "---- TEST 14: builtins error handling (unknown command) ----" >> validator_log.txt
+echo "EXPECTED: prints 'Command not found' message" >> validator_log.txt
+echo "ACTUAL:" >> validator_log.txt
+unknown_command_123 >> validator_log.txt 2>&1 || echo "unknown_command_123 failure recorded" >> validator_log.txt
+echo "" >> validator_log.txt
+
+echo "---- TEST 15: cleanup ----" >> validator_log.txt
+echo "EXPECTED: no test artifacts remain" >> validator_log.txt
+echo "ACTUAL:" >> validator_log.txt
+rm -f validator_tmp validator_tmp2 a_test.txt b_test.txt c_test.txt ht.txt out.txt p_out.txt nested_validator.mysh 2>/dev/null || true
+ls >> validator_log.txt 2>&1
+echo "" >> validator_log.txt
+
+echo "=== VALIDATION COMPLETE ===" >> validator_log.txt
+echo "See validator_log.txt for detailed output"
+echo "Validation finished. Inspect validator_log.txt to compare EXPECTED vs ACTUAL."

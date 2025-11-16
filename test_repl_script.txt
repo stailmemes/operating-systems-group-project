@@ -1,0 +1,7 @@
+echo start
+jobs
+echo afterjobs
+crf temp_test_file.txt
+ls
+rm temp_test_file.txt
+echo finished
