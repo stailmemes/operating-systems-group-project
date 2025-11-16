@@ -22,6 +22,9 @@ import argparser
 import commands
 import process_subsystem
 
+COLOR_COMMAND = '\033[92m'
+COLOR_FILE = '\033[94m'
+COLOR_RESET = '\033[0m'
 # ------------------------------------------------------------
 # Globals & integration
 # ------------------------------------------------------------
@@ -154,6 +157,47 @@ def _popen_platform(argv, stdin=None, stdout=None, stderr=None):
         return subprocess.Popen(argv, stdin=stdin, stdout=stdout, stderr=stderr or subprocess.PIPE,
                                 preexec_fn=os.setsid)
 
+
+class ShellCompleter(Completer):
+    def __init__(self, builtins: set, aliases: dict):
+        self.builtins = builtins
+        self.aliases = aliases
+
+    # Keep both arguments (document, complete_event) to avoid the previous error.
+    def get_completions(self, document, complete_event):
+        # The word the user is currently typing
+        word_before_cursor = document.get_word_before_cursor(WORD=True)
+        word_len = len(word_before_cursor)
+
+        # 1. Suggest Built-in Commands and Aliases
+        if not document.text_before_cursor.strip() or document.text_before_cursor.strip() == word_before_cursor:
+            commands_to_suggest = self.builtins.union(self.aliases.keys())
+            for name in sorted(commands_to_suggest):
+                if name.startswith(word_before_cursor):
+                    # FIX: Pass the shift amount as a positional argument.
+                    yield Completion(name, -word_len)
+
+        # 2. Suggest File Paths
+        if word_before_cursor:
+            try:
+                # Use glob to find matching files/directories
+                search_pattern = word_before_cursor + '*'
+
+                # Check if the word is a valid path prefix
+                for path in glob.glob(search_pattern):
+                    display = path
+                    if os.path.isdir(path):
+                        # Append a slash for directories
+                        display += os.sep
+
+                    # FIX: Pass the shift amount as a positional argument.
+                    yield Completion(display, -word_len)
+            except Exception:
+                # Safely ignore any exceptions during file globbing
+                pass
+
+
+# ... rest of Repl.py ...
 # -----------------------
 # Pipeline executor
 # -----------------------
@@ -776,7 +820,8 @@ def main():
         return run_script(sys.argv[1])
 
     global session
-    session = PromptSession(history=FileHistory(".myossh_history"))
+    shell_completer = ShellCompleter(_BUILTINS, ALIASES)
+    session = PromptSession(history=FileHistory(".myossh_history"), completer=shell_completer)
 
     env = dict(os.environ)
     history = []
