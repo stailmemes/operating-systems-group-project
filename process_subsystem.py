@@ -149,18 +149,37 @@ class JobControl:
     def jobs_list(self):
         with self.lock:
             for jid, job in sorted(self.jobs.items()):
-                status = "stopped" if job.stopped else ("running" if job.proc.poll() is None else "done")
+
+
+                if job.proc is None:
+                    status = "running"
+                    pid_str = "Builtin"
+                else:
+                    status = "stopped" if job.stopped else ("running" if job.proc.poll() is None else "done")
+                    pid_str = str(job.proc.pid)
+
                 start = time.strftime("%H:%M:%S", time.localtime(job.start_time))
                 end = time.strftime("%H:%M:%S", time.localtime(job.end_time)) if job.end_time else "-"
-                self.print(f"[{jid}] pid={job.proc.pid} {status} start={start} end={end} :: {job.cmd}")
+
+                self.print(f"[{jid}] pid={pid_str} {status} start={start} end={end} :: {job.cmd}")
 
     def ps(self, active_only: bool = False):
         with self.lock:
             for jid, job in sorted(self.jobs.items()):
-                if active_only and job.proc.poll() is not None:
+                # FIX: Check if it's a builtin job
+                if job.proc is None:
+                    is_done = False
+                    status = "running"
+                    pid_str = "Builtin"
+                else:
+                    is_done = job.proc.poll() is not None
+                    status = "stopped" if job.stopped else ("running" if not is_done else "done")
+                    pid_str = str(job.proc.pid)
+
+                if active_only and is_done:
                     continue
-                status = "stopped" if job.stopped else ("running" if job.proc.poll() is None else "done")
-                self.print(f"{job.proc.pid}\t{status}\t{job.cmd}")
+
+                self.print(f"{pid_str}\t{status}\t{job.cmd}")
 
     def _find_job(self, jid: int) -> Optional[Job]:
         with self.lock:
@@ -171,6 +190,13 @@ class JobControl:
         job = self._find_job(jid)
         if not job:
             self.print(f"No such job {jid}")
+            return
+        if job.proc is None:
+            self.print(f"[{job.jid}] Builtin job {job.cmd} foregrounded. Waiting for completion...")
+            # Busy wait until the builtin's watcher thread removes it.
+            while jid in self.jobs:
+                time.sleep(0.05)  # Yield time to the builtin's thread
+            self.print(f"[{job.jid}] Builtin job completed.")
             return
         # resume if stopped
         if job.stopped:
@@ -225,6 +251,12 @@ class JobControl:
         job = self._find_job(jid)
         if not job:
             self.print(f"No such job {jid}")
+            return
+        if job.proc is None:
+            with self.lock:
+                if jid in self.jobs:
+                    del self.jobs[jid]
+                    self.print(f"[{jid}] Builtin job killed (removed from job list).")
             return
         try:
             if os.name == "nt":

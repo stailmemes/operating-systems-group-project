@@ -48,8 +48,8 @@ def build_parser():
     run.set_defaults(func=commands.run_file)
 
     cat = subs.add_parser("cat")
-    cat.add_argument("path")
-    cat.set_defaults(func=commands.cat_file)
+    cat.add_argument("path", nargs="*", default=None)
+    cat.set_defaults(func=commands.cat_command)
 
     head = subs.add_parser("head")
     head.add_argument("path")
@@ -62,7 +62,8 @@ def build_parser():
     tail.set_defaults(func=commands.tail_file)
 
     alias = subs.add_parser("alias")
-    alias.add_argument("definition")
+    # Accept the full assignment string (e.g., 'vtest="echo ALIAS_OK"') as one argument
+    alias.add_argument("assignment", nargs=1)
     alias.set_defaults(func=commands.alias_command)
 
     unalias = subs.add_parser("unalias")
@@ -70,14 +71,14 @@ def build_parser():
     unalias.set_defaults(func=commands.unalias_command)
 
     export = subs.add_parser("export")
-    export.add_argument("assignment")
+    export.add_argument("assignment", nargs=1)  # Change 2: assignment is a list of 1 string
     export.set_defaults(func=commands.export_var)
 
     sleep = subs.add_parser("sleep", help="Sleep for N seconds")
-    sleep.add_argument("seconds")
+    sleep.add_argument("seconds", type=float)  # Change 3: Set type to float
     sleep.add_argument("--background", "-b", action="store_true",
                        help="Run in background (internal)")
-    sleep.set_defaults(func=commands.sleep_command)
+    sleep.set_defaults(func=commands.sleep_builtin)  # Change 3: Correct func name
 
     # Job control
     jobs = subs.add_parser("jobs")
