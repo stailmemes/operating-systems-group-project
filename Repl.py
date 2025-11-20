@@ -465,14 +465,14 @@ def run_single_command(argv, background, env):
         # Ensure they have a safe stdin instead of inheriting
         # prompt-toolkit's nonblocking FD (causing sleep to break).
         # ---------------------------------------------------
-        if background and stdin_redir is None:
-            r, w = os.pipe()
-            os.close(w)  # writer never used
-            stdin_redir = os.fdopen(r, "r")  # safe dummy stdin
-        # ---------------------------------------------------
-
         # ---------- BACKGROUND BUILTIN ----------
         if background:
+
+            # Linux FIX: use real sys.stdin for background builtins
+            # or stdin_redir will be an unreadable pipe that returns EOF instantly
+            if os.name == "posix" and stdin_redir is not None:
+                stdin_redir = sys.stdin
+
             jid, job = JOBCTL.register_proc(None, " ".join(argv), True)
             vpid = job.pid
 
