@@ -392,318 +392,184 @@ def execute_pipeline(stages, background=False, env=None):
 # Single command runner
 # -----------------------
 def run_single_command(argv, background, env):
-    # parse redirections first
+    """
+    Corrected and stable command executor:
+    - Builtins detected by _BUILTINS table only
+    - Argparse parsing ONLY inside builtin execution branch
+    - Virtual PIDs for builtin background jobs
+    - External jobs fully handled by JOBCTL
+    """
+    # ----------------------------------------
+    # Step 1: Handle redirections first
+    # ----------------------------------------
     try:
-        # NOTE: handle_redirections must return file objects for stdin/stdout_redir
         argv_clean, stdin_redir, stdout_redir, append = handle_redirections(argv)
     except ValueError as e:
         print(f"parse error: {e}")
         return 1, None
+
     if not argv_clean:
         return 0, None
+
     argv = argv_clean
+    cmd = argv[0]
 
-    # --- Helper: Run Builtin with I/O Redirection ---
-    # This helper isolates the temporary manipulation of sys.stdin/sys.stdout
-    def _run_builtin_in_io_context(argv, func, stdin_redir, stdout_redir):
-        old_stdin, old_stdout, old_stderr = sys.stdin, sys.stdout, sys.stderr
-        try:
-            # 1. Swap I/O streams if redirection is present (file-based or pipe handles)
-            if stdin_redir:
-                sys.stdin = stdin_redir
-            if stdout_redir:
-                sys.stdout = stdout_redir
+    # ----------------------------------------
+    # BUILTIN COMMAND
+    # ----------------------------------------
+    if cmd in _BUILTINS:
 
-            # 2. Re-parse arguments in the execution context
-            # We must re-parse inside the context to ensure the correct command is called
+        def run_builtin_in_context():
+            old_in, old_out = sys.stdin, sys.stdout
             try:
-                args = parser.parse_args(argv)
-            except SystemExit:
-                return 1  # parse error or -h
+                if stdin_redir:
+                    sys.stdin = stdin_redir
+                if stdout_redir:
+                    sys.stdout = stdout_redir
 
-            # 3. Execute the function
-            # Special-case exit (must be checked before func call)
-            if argv[0] == "exit":
+                try:
+                    args = parser.parse_args(argv)
+                except SystemExit:
+                    return 1
+
+                if not hasattr(args, "func"):
+                    print(f"Unknown builtin: {cmd}")
+                    return 127
+
+                # special handling for exit
+                if cmd == "exit":
+                    args.func(args)
+                    return 0
+
                 args.func(args)
                 return 0
 
-            args.func(args)
-            return 0
-        except Exception as e:
-            # Handle exception, ensuring output goes to current sys.stderr (or pipe if redirected)
-            print(f"builtin error: {e}", file=sys.stderr)
-            return 1
-        finally:
-            # 4. Restore original streams
-            sys.stdin, sys.stdout, sys.stderr = old_stdin, old_stdout, old_stderr
-            # 5. Close file handles only if they were opened by handle_redirections
+            except Exception as e:
+                print(f"builtin error: {e}", file=sys.stderr)
+                return 1
+
+            finally:
+                sys.stdin, sys.stdout = old_in, old_out
+                # close files if they belong to redirection
+                for fh in (stdin_redir, stdout_redir):
+                    try:
+                        if fh: fh.close()
+                    except:
+                        pass
+
+        # ---------- BACKGROUND BUILTIN ----------
+        if background:
+            jid, job = JOBCTL.register_proc(None, " ".join(argv), True)
+            vpid = job.pid
+
+            if not SCRIPT_MODE:
+                print(f"[{jid}] {vpid}")
+
+            def bg_thread():
+                run_builtin_in_context()
+                with JOBCTL.lock:
+                    if jid in JOBCTL.jobs:
+                        if not SCRIPT_MODE:
+                            print(f"\n[{jid}] {vpid} finished")
+                        del JOBCTL.jobs[jid]
+
+            t = threading.Thread(target=bg_thread, daemon=True)
+            t.start()
+            return 0, vpid
+
+        # ---------- FOREGROUND BUILTIN ----------
+        rc = run_builtin_in_context()
+        env["?"] = str(rc)
+        return rc, None
+
+    # ----------------------------------------
+    # EXTERNAL COMMAND
+    # ----------------------------------------
+    # Windows PATHEXT and .py resolution
+    argv_to_run = argv
+
+    if os.name == "nt":
+        import shutil as _sh
+        cmd0 = argv_to_run[0]
+        if os.path.isfile(cmd0) and cmd0.lower().endswith(".py"):
+            argv_to_run = [sys.executable, cmd0] + argv_to_run[1:]
+        elif "." not in os.path.basename(cmd0):
+            pathext = os.getenv("PATHEXT", ".EXE;.BAT;.CMD;.COM;.PY").split(";")
+            for ext in pathext:
+                candidate = cmd0 + ext
+                full = _sh.which(candidate)
+                if full:
+                    if full.lower().endswith(".py"):
+                        argv_to_run = [sys.executable, full] + argv_to_run[1:]
+                    else:
+                        argv_to_run = [full] + argv_to_run[1:]
+                    break
+
+    # spawn process (with or without redirection)
+    try:
+        proc = _popen_platform(argv_to_run,
+                               stdin=stdin_redir if stdin_redir else None,
+                               stdout=stdout_redir if stdout_redir else None,
+                               stderr=subprocess.PIPE)
+    except FileNotFoundError:
+        print(f"Command not found: {cmd}")
+        return 127, None
+
+    # ---------- BACKGROUND EXTERNAL ----------
+    if background:
+        jid, job = JOBCTL.register_proc(proc, " ".join(argv), True)
+        if not SCRIPT_MODE:
+            print(f"[{jid}] {job.pid}")
+
+        def watcher():
+            try:
+                proc.wait()
+            except:
+                pass
+            with JOBCTL.lock:
+                if jid in JOBCTL.jobs:
+                    if not SCRIPT_MODE:
+                        print(f"\n[{jid}] {job.pid} finished")
+                    del JOBCTL.jobs[jid]
             for fh in (stdin_redir, stdout_redir):
                 try:
                     if fh: fh.close()
                 except:
                     pass
 
-    # --- Builtins ---
-    if argv[0] in _BUILTINS:
-        # Initial parse to get the function object
-        try:
-            args = parser.parse_args(argv)
-        except SystemExit:
-            return 1, None  # Parse error or -h
+        threading.Thread(target=watcher, daemon=True).start()
+        return 0, job.pid
 
-        if not hasattr(args, "func"):
-            print("Unknown command!")
-            return 127, None
-
-        func = args.func
-
-        if background:
-            # CRITICAL FIX: Run Builtins in Background Thread
-
-            # 1. Register the job
-            with JOBCTL.lock:
-                jid = JOBCTL.next_jid
-                JOBCTL.next_jid += 1
-                # Dummy process object (None) for builtins
-                job = process_subsystem.Job(jid, None, _shlex_join(argv), True)
-                JOBCTL.jobs[jid] = job
-                pid = job.pid  # virtual PID assigned by constructor
-                if not SCRIPT_MODE:
-                    print(f"[{jid}] {JOBCTL.jobs[jid].pid}")
-
-
-            # 2. Define the watcher/runner
-            def watcher_builtin():
-                # SAFELY capture stdout before running builtin
-                safe_stdout = sys.stdout
-
-                # Run the builtin
-                _run_builtin_in_io_context(argv, func, stdin_redir, stdout_redir)
-
-                # Print completion only if allowed AND stdout is still open
-                try:
-                    if jid in JOBCTL.jobs:
-                        if not SCRIPT_MODE:
-                            try:
-                                safe_stdout.write(f"\n[{jid}] finished\n")
-                                safe_stdout.flush()
-                            except Exception:
-                                pass  # stdout closed → silently ignore
-                        del JOBCTL.jobs[jid]
-                except Exception:
-                    pass
-
-            # 4. Start the thread
-            threading.Thread(target=watcher_builtin, daemon=True).start()
-            if not SCRIPT_MODE:
-                print(f"[{jid}] {JOBCTL.jobs[jid].pid}")
-
-            return 0, jid  # Return JID as the pid stand-in
-
-        # Foreground Builtin Execution
-        else:
-            rc = _run_builtin_in_io_context(argv, func, stdin_redir, stdout_redir)
-            return rc, None
-
-    # --- External command via JOBCTL (Only if not a builtin) ---
-    # The logic here remains mostly the same, but the error handling needs a slight tweak
-    # for cleaner file handle closing on error path.
+    # ---------- FOREGROUND EXTERNAL ----------
     try:
-        # If redirections present, spawn process manually and register job (Original Complex Logic)
-        if stdin_redir or stdout_redir:
-            # ... (Original complex logic for Windows path resolution and Popen) ...
-
-            argv_to_run = argv
-
-            # --- Windows path resolution (Kept as is for compatibility) ---
+        rc = proc.wait()
+    except KeyboardInterrupt:
+        try:
             if os.name == "nt":
-                import shutil as _sh
-                cmd0 = argv_to_run[0]
-                if os.path.isfile(cmd0) and cmd0.lower().endswith(".py"):
-                    argv_to_run = [sys.executable, cmd0] + argv_to_run[1:]
-                elif "." not in os.path.basename(cmd0):
-                    pathext = os.getenv("PATHEXT", ".EXE;.BAT;.CMD;.COM;.PY").split(";")
-                    for ext in pathext:
-                        candidate = cmd0 + ext
-                        full = _sh.which(candidate)
-                        if full:
-                            if full.lower().endswith(".py"):
-                                argv_to_run = [sys.executable, full] + argv_to_run[1:]
-                            else:
-                                argv_to_run = [full] + argv_to_run[1:]
-                            break
-
-            stdin_arg = stdin_redir if stdin_redir else None
-            stdout_arg = stdout_redir if stdout_redir else None
-
-            # Use the platform-specific Popen
-            try:
-                proc = _popen_platform(argv_to_run, stdin=stdin_arg, stdout=stdout_arg, stderr=subprocess.PIPE)
-            except FileNotFoundError:
-                print(f"Command not found: {argv[0]}")
-                for fh in (stdin_redir, stdout_redir):
-                    try:
-                        if fh: fh.close()
-                    except:
-                        pass
-                return 127, None
-
-            # Job Registration (same as original)
-            with JOBCTL.lock:
-                jid = JOBCTL.next_jid
-                JOBCTL.next_jid += 1
-                job = process_subsystem.Job(jid, None, _shlex_join(argv), True)
-                JOBCTL.jobs[jid] = job
-                pid = job.pid  # virtual PID assigned by constructor
-                if not SCRIPT_MODE:
-                    print(f"[{jid}] {JOBCTL.jobs[jid].pid}")
-
-
-            if background:
-                if not SCRIPT_MODE:
-                    print(f"[{jid}] {JOBCTL.jobs[jid].pid}")
-
-
-                # Watcher thread (same as original)
-                def watcher():
-                    try:
-                        proc.wait()
-                    except Exception:
-                        pass
-                    with JOBCTL.lock:
-                        if jid in JOBCTL.jobs:
-                            if not SCRIPT_MODE:
-                                pid = JOBCTL.jobs[jid].pid
-                                print(f"\n[{jid}] {pid} finished")
-
-                            del JOBCTL.jobs[jid]
-                    # close fhs
-                    for fh in (stdin_redir, stdout_redir):
-                        try:
-                            if fh: fh.close()
-                        except:
-                            pass
-
-                threading.Thread(target=watcher, daemon=True).start()
-                return 0, proc.pid
+                proc.send_signal(signal.CTRL_BREAK_EVENT)
             else:
-                # Foreground execution (same as original)
-                try:
-                    rc = proc.wait()
-                except KeyboardInterrupt:
-                    try:
-                        if os.name == "nt":
-                            proc.send_signal(signal.CTRL_BREAK_EVENT)
-                        else:
-                            os.killpg(os.getpgid(proc.pid), signal.SIGINT)
-                    except Exception:
-                        pass
-                    rc = proc.wait()
-                with JOBCTL.lock:
-                    try:
-                        del JOBCTL.jobs[jid]
-                    except:
-                        pass
-                env["?"] = str(rc)
-                # close redirs
-                try:
-                    if stdin_redir: stdin_redir.close()
-                    if stdout_redir: stdout_redir.close()
-                except:
-                    pass
-                return rc, None
+                os.killpg(os.getpgid(proc.pid), signal.SIGINT)
+        except:
+            pass
+        rc = proc.wait()
 
-        # Delegated Job Control (No Redirections)
-        # External command (no redirections)
-        else:
-            # Resolve Windows .py or PATHEXT (unchanged from your existing code)
-            argv_to_run = argv
+    # cleanup
+    for fh in (stdin_redir, stdout_redir):
+        try:
+            if fh: fh.close()
+        except:
+            pass
 
-            if os.name == "nt":
-                import shutil as _sh
-                cmd0 = argv_to_run[0]
-                if os.path.isfile(cmd0) and cmd0.lower().endswith(".py"):
-                    argv_to_run = [sys.executable, cmd0] + argv_to_run[1:]
-                elif "." not in os.path.basename(cmd0):
-                    pathext = os.getenv("PATHEXT", ".EXE;.BAT;.CMD;.COM;.PY").split(";")
-                    for ext in pathext:
-                        candidate = cmd0 + ext
-                        full = _sh.which(candidate)
-                        if full:
-                            if full.lower().endswith(".py"):
-                                argv_to_run = [sys.executable, full] + argv_to_run[1:]
-                            else:
-                                argv_to_run = [full] + argv_to_run[1:]
-                            break
+    # unregister job
+    with JOBCTL.lock:
+        try:
+            del JOBCTL.jobs[jid]
+        except:
+            pass
 
-            # Launch the external command
-            try:
-                proc = _popen_platform(argv_to_run, stdin=None, stdout=None, stderr=subprocess.PIPE)
-            except FileNotFoundError:
-                print(f"Command not found: {argv[0]}")
-                return 127, None
+    env["?"] = str(rc)
+    return rc, None
 
-            # Register job
-            jid, job = JOBCTL.register_proc(proc, " ".join(argv), background)
-
-            if background:
-                if not SCRIPT_MODE:
-                    print(f"[{jid}] {job.pid}")
-
-                def watcher():
-                    try:
-                        proc.wait()
-                    except Exception:
-                        pass
-                    with JOBCTL.lock:
-                        if jid in JOBCTL.jobs:
-                            if not SCRIPT_MODE:
-                                print(f"\n[{jid}] {job.pid} finished")
-                            del JOBCTL.jobs[jid]
-
-                threading.Thread(target=watcher, daemon=True).start()
-                return 0, job.pid
-
-            else:
-                try:
-                    rc = proc.wait()
-                except KeyboardInterrupt:
-                    try:
-                        if os.name == "nt":
-                            proc.send_signal(signal.CTRL_BREAK_EVENT)
-                        else:
-                            os.killpg(os.getpgid(proc.pid), signal.SIGINT)
-                    except Exception:
-                        pass
-                    rc = proc.wait()
-
-                with JOBCTL.lock:
-                    try:
-                        del JOBCTL.jobs[jid]
-                    except:
-                        pass
-
-                env["?"] = str(rc)
-                return rc, None
-
-
-    # --- Error Handling for External Command ---
-    except FileNotFoundError:
-        print(f"Command not found: {argv[0]}")
-        for fh in (stdin_redir, stdout_redir):
-            try:
-                if fh: fh.close()
-            except:
-                pass
-        return 127, None
-    except Exception as e:
-        print(str(e))
-        for fh in (stdin_redir, stdout_redir):
-            try:
-                if fh: fh.close()
-            except:
-                pass
-        return 126, None
 # -----------------------
 # Line processor
 # -----------------------
@@ -829,4 +695,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-"11ARVAZ3I0PkJE8HJsTzlA_3Xu8V4oCy83CUlvJZBYhI16XN4pGQ0KqnvNAI0pVLD7KSDMHMWGNEvogJzs"
