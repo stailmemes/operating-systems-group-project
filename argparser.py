@@ -57,8 +57,7 @@ def build_parser():
     head.set_defaults(func=commands.head_file)
 
     tail = subs.add_parser("tail")
-    tail.add_argument("path")
-    tail.add_argument("-n", type=int, default=10)
+    tail.add_argument("path", nargs="?")
     tail.set_defaults(func=commands.tail_file)
 
     alias = subs.add_parser("alias")

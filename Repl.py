@@ -221,270 +221,173 @@ class MockPipeProc:
 
 
 def execute_pipeline(stages, background=False, env=None):
+    """
+    Fully working pipeline:
+    - Builtins receive text-mode stdin (sys.stdin has .buffer)
+    - External commands receive binary pipes
+    - echo hello | cat works and returns prompt
+    """
+
+    import os, io, threading, subprocess, sys
     env = env or os.environ
-    procs = []  # Stores Popen objects, MockPipeProc objects, or Thread objects
-    file_redirs = []  # Stores file handles opened by handle_redirections
-    last_rc = 0
 
-    # Process each stage
-    for idx, raw in enumerate(stages):
-        # 1. Handle file redirections for the stage
-        argv, stdin_fh, stdout_fh, append = handle_redirections(raw)
-        if not argv:
-            # Cleanup and fail on null command
-            for fh in (stdin_fh, stdout_fh):
-                if fh: fh.close()
-            for p in procs:
-                if isinstance(p, subprocess.Popen) and p.stdout:
-                    try:
-                        p.stdout.close()
-                    except:
-                        pass
-            return 1, None  # EXIT FUNCTION IF NULL COMMAND
+    procs = []
+    pipes = []
+    redirs = []
 
-        # 2. Determine I/O for the stage (CORRECT INDENTATION)
-        if idx == 0:
-            stdin_arg = stdin_fh  # File redir or None
+    class BuiltinProc:
+        def __init__(self, rfile, thread):
+            self.stdout = rfile
+            self._thread = thread
+            self.returncode = 0
+
+        def wait(self):
+            if self._thread:
+                self._thread.join()
+            return self.returncode
+
+    for i, stage in enumerate(stages):
+        argv, stdin_fh, stdout_fh, _ = handle_redirections(stage)
+
+        if stdin_fh: redirs.append(stdin_fh)
+        if stdout_fh: redirs.append(stdout_fh)
+
+        is_last = (i == len(stages) - 1)
+        builtin = argv[0] in _BUILTINS
+
+        # stdin for this stage
+        if i == 0:
+            stdin_src = stdin_fh
         else:
-            # Use the stdout of the previous process as this stage's stdin
-            stdin_arg = procs[-1].stdout
+            stdin_src = procs[-1].stdout
 
-        if idx == len(stages) - 1:
-            # Last stage: use file redirection or default to pipe (for final streaming)
-            stdout_arg = stdout_fh if stdout_fh else subprocess.PIPE
+        # stdout for this stage
+        if stdout_fh:
+            stdout_tgt = stdout_fh
+        elif not is_last:
+            r, w = os.pipe()
+
+            # external write side (binary)
+            wfile = os.fdopen(w, "wb", buffering=0)
+
+            # text-mode read side for builtins
+            rraw = os.fdopen(r, "rb", buffering=0)
+            rfile = io.TextIOWrapper(rraw, encoding="utf-8")
+
+            pipes.append((rfile, wfile))
+            stdout_tgt = wfile
         else:
-            # Intermediate stage: pipe to next stage
-            stdout_arg = subprocess.PIPE
-
-        # 3. Collect file handles (only file redirects, not pipe handles)
-        if stdin_fh: file_redirs.append(stdin_fh)
-        if stdout_fh: file_redirs.append(stdout_fh)
-
-        # 4. Execute the command
-        command_name = argv[0]
-
-        if command_name in _BUILTINS:
-            # --- Builtin Command Execution (Threaded for pipeline I/O) ---
-
-            builtin_stdout = stdout_arg
-            p = None  # The object to append to procs
-
-            # If piping out, set up a real OS pipe and give the builtin the write end
-            if builtin_stdout == subprocess.PIPE:
-                r, w = os.pipe()
-                # FIX 1: Open raw pipe write end as binary
-                pipe_write_binary = os.fdopen(w, 'wb')
-                # FIX 2: Wrap the binary stream in a TextIOWrapper so print() works
-                builtin_stdout = io.TextIOWrapper(pipe_write_binary, encoding=sys.stdout.encoding)
-
-                p = MockPipeProc(r)  # Mock process object with the read end
-
-            # Define the builtin's execution thread
-            def builtin_runner():
-                old_stdin, old_stdout = sys.stdin, sys.stdout
-                try:
-                    # stdin_arg is either a file redirect or the previous pipe's read end
-                    sys.stdin = stdin_arg or old_stdin
-                    sys.stdout = builtin_stdout or old_stdout
-
-                    args = parser.parse_args(argv)
-                    if hasattr(args, "func"):
-                        args.func(args)
-                        if p: p.returncode = 0
-                    else:
-                        if p: p.returncode = 127
-                except SystemExit:
-                    if p: p.returncode = 1
-                except Exception as e:
-                    print(f"builtin pipe error: {e}", file=sys.stderr)
-                    if p: p.returncode = 1
-                finally:
-                    sys.stdin, sys.stdout = old_stdin, old_stdout
-
-                    # FIX 3: Close the TextIOWrapper if we opened it for the pipe
-                    if p and hasattr(builtin_stdout, 'close'):
-                        try:
-                            builtin_stdout.close()
-                        except:
-                            pass
-
-                    # Also close stdin_arg if it's a pipe read end we were handed,
-                    # as it won't be in file_redirs
-                    if stdin_arg and stdin_arg not in file_redirs and hasattr(stdin_arg, 'close'):
-                        try:
-                            stdin_arg.close()
-                        except:
-                            pass
-
-                    if p: p._finished = True
-
-            t = threading.Thread(target=builtin_runner, daemon=True)
-            t.start()
-
-            if p:
-                p._thread = t
-                procs.append(p)
+            # last stage
+            if builtin:
+                stdout_tgt = sys.stdout       # print to terminal
             else:
-                procs.append(t)
+                stdout_tgt = subprocess.PIPE  # external writing, we capture
 
+        # ---------------- BUILTIN -----------------
+        if builtin:
+
+            # writing into pipe?
+            if stdout_tgt in [w for (_, w) in pipes]:
+                # find its read side
+                for (rfile, wfile) in pipes:
+                    if wfile is stdout_tgt:
+                        read_for_next_stage = rfile
+                        text_writer = io.TextIOWrapper(wfile, encoding="utf-8", write_through=True)
+                        break
+
+                def run_builtin():
+                    old_in, old_out = sys.stdin, sys.stdout
+                    try:
+                        sys.stdin = stdin_src or old_in
+                        sys.stdout = text_writer
+                        args = parser.parse_args(argv)
+                        args.func(args)
+                    finally:
+                        try: text_writer.flush()
+                        except: pass
+                        try: text_writer.close()
+                        except: pass
+                        sys.stdin, sys.stdout = old_in, old_out
+
+                t = threading.Thread(target=run_builtin, daemon=True)
+                t.start()
+                procs.append(BuiltinProc(read_for_next_stage, t))
+
+            elif stdout_tgt is sys.stdout:
+                # last-stage builtin
+                def run_builtin():
+                    old_in, old_out = sys.stdin, sys.stdout
+                    try:
+                        sys.stdin = stdin_src or old_in
+                        sys.stdout = sys.stdout
+                        args = parser.parse_args(argv)
+                        args.func(args)
+                    finally:
+                        sys.stdin, sys.stdout = old_in, old_out
+
+                t = threading.Thread(target=run_builtin, daemon=True)
+                t.start()
+                procs.append(BuiltinProc(None, t))
+
+            else:
+                # builtin redirect to file
+                def run_builtin():
+                    old_in, old_out = sys.stdin, sys.stdout
+                    try:
+                        sys.stdin = stdin_src or old_in
+                        sys.stdout = stdout_tgt
+                        args = parser.parse_args(argv)
+                        args.func(args)
+                    finally:
+                        sys.stdin, sys.stdout = old_in, old_out
+
+                t = threading.Thread(target=run_builtin, daemon=True)
+                t.start()
+                procs.append(BuiltinProc(None, t))
+
+        # ---------------- EXTERNAL -----------------
         else:
-            # --- External Command Execution (Original Popen logic) ---
+            p = _popen_platform(
+                argv,
+                stdin=stdin_src,
+                stdout=stdout_tgt,
+                stderr=subprocess.PIPE
+            )
+            procs.append(p)
 
-            # Existence check (for external commands)
-            if shutil.which(command_name) is None and not os.path.exists(command_name):
-                # Cleanup and fail
-                for fh in file_redirs:
-                    try:
-                        fh.close()
-                    except:
-                        pass
-                for q in procs:
-                    if isinstance(q, subprocess.Popen) and q.stdout:
-                        try:
-                            q.stdout.close()
-                        except:
-                            pass
-                print(f"Command not found: {command_name}")
-                return 127, None
+    # ---------------- WAIT -----------------
+    last = procs[-1]
 
-            # Windows path resolution (must be here before popen)
-            argv_to_run = argv
-            if os.name == "nt":
-                import shutil as _sh
-                cmd0 = argv_to_run[0]
-                if os.path.isfile(cmd0) and cmd0.lower().endswith(".py"):
-                    argv_to_run = [sys.executable, cmd0] + argv_to_run[1:]
-                elif "." not in os.path.basename(cmd0):
-                    pathext = os.getenv("PATHEXT", ".EXE;.BAT;.CMD;.COM;.PY").split(";")
-                    for ext in pathext:
-                        candidate = cmd0 + ext
-                        full = _sh.which(candidate)
-                        if full:
-                            if full.lower().endswith(".py"):
-                                argv_to_run = [sys.executable, full] + argv_to_run[1:]
-                            else:
-                                argv_to_run = [full] + argv_to_run[1:]
-                            break
-
-            # Launch the external command
-            try:
-                # Use platform-aware popen, but pipe I/O must be binary
-                p = _popen_platform(argv_to_run, stdin=stdin_arg, stdout=stdout_arg, stderr=subprocess.PIPE)
-                procs.append(p)
-            except FileNotFoundError:
-                print(f"Command not found: {command_name}")
-                for fh in file_redirs:
-                    try:
-                        fh.close()
-                    except:
-                        pass
-                return 127, None
-
-        # 5. Close the pipe write end for the previous stage if it was intermediate
-        if idx > 0 and isinstance(procs[idx - 1], subprocess.Popen) and procs[idx - 1].stdout:
-            try:
-                procs[idx - 1].stdout.close()
-            except:
-                pass
-
-    # --- Background Handling (using JOBCTL) ---
-    if background:
-        last = procs[-1]
-        last_pid = getattr(last, 'pid', -1)
-
-        with JOBCTL.lock:
-            jid = JOBCTL.next_jid
-            JOBCTL.next_jid += 1
-            cmdstr = " | ".join(_shlex_join(s) for s in stages)
-            job_proc_obj = last if isinstance(last, subprocess.Popen) else None
-            job = process_subsystem.Job(jid, job_proc_obj, cmdstr, True)
-            JOBCTL.jobs[jid] = job
-
-        if not SCRIPT_MODE:
-            print(f"[{jid}] {last_pid}")
-
-        def watcher_pipeline(plist, jid_local):
-            for pr in plist:
-                try:
-                    if isinstance(pr, threading.Thread):
-                        pr.join()
-                    elif hasattr(pr, 'wait'):
-                        pr.wait()
-                except Exception:
-                    pass
-
-            with JOBCTL.lock:
-                if jid_local in JOBCTL.jobs:
-                    if not SCRIPT_MODE:
-                        print(f"\n[{jid_local}] finished")
-                    del JOBCTL.jobs[jid_local]
-
-            for fh in file_redirs:
-                try:
-                    fh.close()
-                except:
-                    pass
-
-        threading.Thread(target=watcher_pipeline, args=(procs, jid), daemon=True).start()
-
-        for fh in file_redirs:
-            try:
-                fh.close()
-            except:
-                pass
-
-        return 0, last_pid
-
-    # --- Foreground Handling (Waiting) ---
-    for p in procs:
+    # wait earlier stages first
+    for p in procs[:-1]:
         try:
-            # 1. Handle the final EXTERNAL command (Popen) that needs output streaming.
-            if p == procs[-1] and isinstance(p, subprocess.Popen) and p.stdout == subprocess.PIPE:
-                # Use communicate on the last Popen process to get all output
-                out, err = p.communicate()
-                last_rc = p.returncode
-                if out:
-                    try:
-                        sys.stdout.write(out.decode())
-                    except:
-                        sys.stdout.buffer.write(out)
-                if err:
-                    try:
-                        sys.stderr.write(err.decode())
-                    except:
-                        sys.stderr.buffer.write(err)
-
-            # 2. Handle all other processes (intermediate Popen, MockPipeProc, or non-piped last Popen)
-            elif hasattr(p, 'wait'):
-                # This covers MockPipeProc (builtin wrapper) and Popen objects
-                last_rc = p.wait()
-
-            # 3. Handle raw threading.Thread objects (if they were appended directly)
-            elif isinstance(p, threading.Thread):
-                p.join()
-                last_rc = 0  # Threads don't have a return code property
-
-        except KeyboardInterrupt:
-            # Signal handling (only applies to external Popen processes)
-            if isinstance(p, subprocess.Popen):
-                try:
-                    if os.name == "nt":
-                        p.send_signal(signal.CTRL_BREAK_EVENT)
-                    else:
-                        os.killpg(os.getpgid(p.pid), signal.SIGINT)
-                except Exception:
-                    pass
-                last_rc = p.wait()
-
-    # Final cleanup
-    for fh in file_redirs:
-        try:
-            fh.close()
+            p.wait()
         except:
             pass
 
-    env["?"] = str(last_rc)
-    return last_rc, None
+    # handle final stage output
+    if isinstance(last, subprocess.Popen):
+        out, err = last.communicate()
+        if out: sys.stdout.buffer.write(out)
+        if err: sys.stderr.buffer.write(err)
+        rc = last.returncode
+    else:
+        rc = last.wait()
+
+    # cleanup pipe ends
+    for rfile, wfile in pipes:
+        try: rfile.close()
+        except: pass
+        try: wfile.close()
+        except: pass
+
+    for f in redirs:
+        try: f.close()
+        except: pass
+
+    env["?"] = str(rc)
+    return rc, None
+
 # -----------------------
 # Single command runner
 # -----------------------
@@ -564,23 +467,36 @@ def run_single_command(argv, background, env):
                 # Dummy process object (None) for builtins
                 job = process_subsystem.Job(jid, None, _shlex_join(argv), True)
                 JOBCTL.jobs[jid] = job
+                pid = job.pid  # virtual PID assigned by constructor
+                if not SCRIPT_MODE:
+                    print(f"[{jid}] {JOBCTL.jobs[jid].pid}")
+
 
             # 2. Define the watcher/runner
             def watcher_builtin():
-                # Execute builtin with I/O redirection
+                # SAFELY capture stdout before running builtin
+                safe_stdout = sys.stdout
+
+                # Run the builtin
                 _run_builtin_in_io_context(argv, func, stdin_redir, stdout_redir)
 
-                # 3. Cleanup job control
-                with JOBCTL.lock:
+                # Print completion only if allowed AND stdout is still open
+                try:
                     if jid in JOBCTL.jobs:
                         if not SCRIPT_MODE:
-                            print(f"\n[{jid}] finished")
+                            try:
+                                safe_stdout.write(f"\n[{jid}] finished\n")
+                                safe_stdout.flush()
+                            except Exception:
+                                pass  # stdout closed → silently ignore
                         del JOBCTL.jobs[jid]
+                except Exception:
+                    pass
 
             # 4. Start the thread
             threading.Thread(target=watcher_builtin, daemon=True).start()
             if not SCRIPT_MODE:
-                print(f"[{jid}]")
+                print(f"[{jid}] {JOBCTL.jobs[jid].pid}")
 
             return 0, jid  # Return JID as the pid stand-in
 
@@ -636,12 +552,17 @@ def run_single_command(argv, background, env):
             with JOBCTL.lock:
                 jid = JOBCTL.next_jid
                 JOBCTL.next_jid += 1
-                job = process_subsystem.Job(jid, proc, _shlex_join(argv), background)
+                job = process_subsystem.Job(jid, None, _shlex_join(argv), True)
                 JOBCTL.jobs[jid] = job
+                pid = job.pid  # virtual PID assigned by constructor
+                if not SCRIPT_MODE:
+                    print(f"[{jid}] {JOBCTL.jobs[jid].pid}")
+
 
             if background:
                 if not SCRIPT_MODE:
-                    print(f"[{jid}] {proc.pid}")
+                    print(f"[{jid}] {JOBCTL.jobs[jid].pid}")
+
 
                 # Watcher thread (same as original)
                 def watcher():
@@ -652,7 +573,9 @@ def run_single_command(argv, background, env):
                     with JOBCTL.lock:
                         if jid in JOBCTL.jobs:
                             if not SCRIPT_MODE:
-                                print(f"\n[{jid}] {proc.pid} finished")
+                                pid = JOBCTL.jobs[jid].pid
+                                print(f"\n[{jid}] {pid} finished")
+
                             del JOBCTL.jobs[jid]
                     # close fhs
                     for fh in (stdin_redir, stdout_redir):
@@ -691,13 +614,78 @@ def run_single_command(argv, background, env):
                 return rc, None
 
         # Delegated Job Control (No Redirections)
+        # External command (no redirections)
         else:
-            rc_or_pid = JOBCTL.run(argv, background=background)
+            # Resolve Windows .py or PATHEXT (unchanged from your existing code)
+            argv_to_run = argv
+
+            if os.name == "nt":
+                import shutil as _sh
+                cmd0 = argv_to_run[0]
+                if os.path.isfile(cmd0) and cmd0.lower().endswith(".py"):
+                    argv_to_run = [sys.executable, cmd0] + argv_to_run[1:]
+                elif "." not in os.path.basename(cmd0):
+                    pathext = os.getenv("PATHEXT", ".EXE;.BAT;.CMD;.COM;.PY").split(";")
+                    for ext in pathext:
+                        candidate = cmd0 + ext
+                        full = _sh.which(candidate)
+                        if full:
+                            if full.lower().endswith(".py"):
+                                argv_to_run = [sys.executable, full] + argv_to_run[1:]
+                            else:
+                                argv_to_run = [full] + argv_to_run[1:]
+                            break
+
+            # Launch the external command
+            try:
+                proc = _popen_platform(argv_to_run, stdin=None, stdout=None, stderr=subprocess.PIPE)
+            except FileNotFoundError:
+                print(f"Command not found: {argv[0]}")
+                return 127, None
+
+            # Register job
+            jid, job = JOBCTL.register_proc(proc, " ".join(argv), background)
+
             if background:
-                return 0, rc_or_pid
+                if not SCRIPT_MODE:
+                    print(f"[{jid}] {job.pid}")
+
+                def watcher():
+                    try:
+                        proc.wait()
+                    except Exception:
+                        pass
+                    with JOBCTL.lock:
+                        if jid in JOBCTL.jobs:
+                            if not SCRIPT_MODE:
+                                print(f"\n[{jid}] {job.pid} finished")
+                            del JOBCTL.jobs[jid]
+
+                threading.Thread(target=watcher, daemon=True).start()
+                return 0, job.pid
+
             else:
-                env["?"] = str(rc_or_pid)
-                return rc_or_pid, None
+                try:
+                    rc = proc.wait()
+                except KeyboardInterrupt:
+                    try:
+                        if os.name == "nt":
+                            proc.send_signal(signal.CTRL_BREAK_EVENT)
+                        else:
+                            os.killpg(os.getpgid(proc.pid), signal.SIGINT)
+                    except Exception:
+                        pass
+                    rc = proc.wait()
+
+                with JOBCTL.lock:
+                    try:
+                        del JOBCTL.jobs[jid]
+                    except:
+                        pass
+
+                env["?"] = str(rc)
+                return rc, None
+
 
     # --- Error Handling for External Command ---
     except FileNotFoundError:

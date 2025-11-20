@@ -123,31 +123,47 @@ def create_file(args):
 
 def cat_command(args):
     """Concatenates file(s) content to stdout, or reads from stdin if no files are given."""
+    import sys
 
     # Helper to process a stream (file or stdin)
     def _read_and_print(stream):
         try:
-            # Read in binary mode, decode to text for printing
+            # Check if the stream is a raw binary stream (like sys.stdin.buffer)
+            is_binary_stream = hasattr(stream, 'read') and not hasattr(stream, 'encoding')
+
+            # Read all content from the stream
             content = stream.read()
-            if isinstance(content, bytes):
-                # If reading from a pipe (binary stream), decode before printing
-                print(content.decode(sys.stdout.encoding), end="")
+
+            if is_binary_stream or isinstance(content, bytes):
+                # If reading from a binary stream (pipe) or got bytes back,
+                # decode the bytes and print to text stdout
+                # Use sys.stdout.encoding to decode to the shell's expected character set
+                output_text = content.decode(sys.stdout.encoding)
+                # Print directly, ensuring no extra newline (end="") and immediate output (flush=True)
+                print(output_text, end="", flush=True)
             else:
-                # If reading from stdin/file opened in text mode
-                print(content, end="")
+                # If reading from a text stream (file or interactive stdin)
+                print(content, end="", flush=True)
+
         except Exception as e:
+            # Use sys.stderr for error output
             print(f"cat: error reading stream: {e}", file=sys.stderr)
 
     # Case 1: No paths provided (read from stdin, e.g., in a pipe)
     if not args.path:
-        # Check if sys.stdin is an interactive TTY (it won't be in the validator script mode)
-        # In a pipeline, sys.stdin is the pipe's read end, which is passed in execute_pipeline
-        _read_and_print(sys.stdin)
+        # Check if sys.stdin is an interactive terminal (TTY)
+        if sys.stdin.isatty():
+            # Interactive TTY: read from regular text stdin
+            _read_and_print(sys.stdin)
+        else:
+            # Pipe: read from the binary buffer of stdin (CRITICAL FIX for pipelines)
+            _read_and_print(sys.stdin.buffer)
         return
 
     # Case 2: Paths provided (read and print each file)
     for path in args.path:
         try:
+            # Open files in text mode for consistency when arguments are provided
             with open(path, 'r') as f:
                 _read_and_print(f)
         except FileNotFoundError:
@@ -156,8 +172,6 @@ def cat_command(args):
             print(f"cat: {path}: Permission denied", file=sys.stderr)
         except Exception as e:
             print(f"cat: error processing {path}: {e}", file=sys.stderr)
-
-
 def head_file(args):
     path = args.path
     n = getattr(args, "n", 10)
@@ -174,11 +188,33 @@ def head_file(args):
         print(f"Error reading file {path}: {e}")
 
 def tail_file(args):
-    path = args.path
+    import sys
+
     n = getattr(args, "n", 10)
+
+    # Case 1: no path → read from stdin (pipeline)
+    if not hasattr(args, "path") or not args.path:
+        # Read from sys.stdin or sys.stdin.buffer (pipeline)
+        stream = sys.stdin if sys.stdin.isatty() else sys.stdin.buffer
+
+        try:
+            content = stream.read()
+            if isinstance(content, bytes):
+                content = content.decode(sys.stdout.encoding)
+
+            lines = content.splitlines()
+            for line in lines[-n:]:
+                print(line)
+        except Exception as e:
+            print(f"tail: error reading stream: {e}", file=sys.stderr)
+        return
+
+    # Case 2: path provided → read file normally
+    path = args.path
     if not os.path.exists(path) or os.path.isdir(path):
         print(f"{path} is invalid")
         return
+
     try:
         with open(path, "r", encoding="utf-8") as f:
             lines = f.readlines()
@@ -186,6 +222,8 @@ def tail_file(args):
                 print(line.rstrip("\n"))
     except Exception as e:
         print(f"Error reading file {path}: {e}")
+
+
 
 # alias management
 def alias_command(args):

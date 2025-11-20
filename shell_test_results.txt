@@ -145,7 +145,7 @@ pipetest
 TEST: background jobs & jobs
 RESULT: PASS
 OUTPUT:
-[1] pid=Builtin running start=04:38:44 end=- :: sleep 2
+[1] pid=Builtin running start=05:12:00 end=- :: sleep 2
 ------------------------------------------------------------
 TEST: fg (bring job to foreground)
 RESULT: PASS
@@ -156,7 +156,7 @@ OUTPUT:
 TEST: kill job
 RESULT: PASS
 OUTPUT:
-[1] pid=Builtin running start=04:38:51 end=- :: sleep 10
+[1] pid=Builtin running start=05:12:06 end=- :: sleep 10
 [1] Builtin job killed (removed from job list).
 ------------------------------------------------------------
 TEST: run script builtin
