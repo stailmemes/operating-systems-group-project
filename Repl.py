@@ -417,6 +417,9 @@ def run_single_command(argv, background, env):
     # ----------------------------------------
     # BUILTIN COMMAND
     # ----------------------------------------
+    # ----------------------------------------
+    # BUILTIN COMMAND
+    # ----------------------------------------
     if cmd in _BUILTINS:
 
         def run_builtin_in_context():
@@ -456,6 +459,17 @@ def run_single_command(argv, background, env):
                         if fh: fh.close()
                     except:
                         pass
+
+        # ---------------------------------------------------
+        # FIX FOR LINUX BACKGROUND BUILTINS:
+        # Ensure they have a safe stdin instead of inheriting
+        # prompt-toolkit's nonblocking FD (causing sleep to break).
+        # ---------------------------------------------------
+        if background and stdin_redir is None:
+            r, w = os.pipe()
+            os.close(w)  # writer never used
+            stdin_redir = os.fdopen(r, "r")  # safe dummy stdin
+        # ---------------------------------------------------
 
         # ---------- BACKGROUND BUILTIN ----------
         if background:
