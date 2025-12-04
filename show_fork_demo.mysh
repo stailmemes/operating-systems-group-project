@@ -1,0 +1,19 @@
+echo "🧪 Demonstrating fork() behavior with background jobs"
+
+echo "1. Starting long task in background (&)"
+sleep 5 &
+
+echo "2. The shell continued running immediately (parent continues)"
+echo "   → This mimics fork(): parent and child run at same time"
+
+echo "3. Listing jobs to show child process exists:"
+jobs
+
+echo "4. While child runs, parent can still execute commands:"
+pwd
+echo "   (parent is alive while child runs)"
+
+echo "5. Foreground the child job:"
+fg 1
+
+echo "6. Child job completed — fork() demonstration finished!"

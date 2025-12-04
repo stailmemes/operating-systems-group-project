@@ -1,82 +1,108 @@
+# argparser.py
 import argparse
-import commands
 import os
+import commands
+from process_subsystem import JOBCTL
 
 def build_parser():
-    parser = argparse.ArgumentParser(prog="my-shell", description="OS Shell Simulator")
-    subparsers = parser.add_subparsers(dest="command")
+    parser = argparse.ArgumentParser(prog="my-shell")
+    subs = parser.add_subparsers(dest="command")
 
-    # list (ls)
-    list_parser = subparsers.add_parser("ls", help="List directory contents")
-    list_parser.set_defaults(func=commands.list_directory)
+    subs.add_parser("ls").set_defaults(func=commands.list_directory)
 
-    # cd
-    cd_parser = subparsers.add_parser("cd", help="Change directory")
-    cd_parser.add_argument(
-        "path",
-        nargs="?",  # makes it optional
-        default=os.path.expanduser("~"),  # default to home directory
-        help="Path to change to"
-    )
-    cd_parser.set_defaults(func=commands.change_directory)
+    cd = subs.add_parser("cd")
+    cd.add_argument("path", nargs="?", default=os.path.expanduser("~"))
+    cd.set_defaults(func=commands.change_directory)
 
-    # pwd
-    pwd_parser = subparsers.add_parser("pwd", help="Print current working directory")
-    pwd_parser.set_defaults(func=commands.print_working_directory)
+    subs.add_parser("pwd").set_defaults(func=commands.print_working_directory)
 
-    # echo
-    echo_parser = subparsers.add_parser("echo", help="Print text")
-    echo_parser.add_argument("text", nargs="+", help="Text to print")
-    echo_parser.set_defaults(func=commands.echo)
+    echo = subs.add_parser("echo")
+    echo.add_argument("text", nargs="+")
+    echo.set_defaults(func=commands.echo)
 
-    # cp
-    cp_parser = subparsers.add_parser("cp", help="Copy a file")
-    cp_parser.add_argument("source", help="Source file")
-    cp_parser.add_argument("destination", help="Destination file")
-    cp_parser.set_defaults(func=commands.copy_file)
+    cp = subs.add_parser("cp")
+    cp.add_argument("source")
+    cp.add_argument("destination")
+    cp.set_defaults(func=commands.copy_file)
 
-    # mv
-    mv_parser = subparsers.add_parser("mv", help="Move a file")
-    mv_parser.add_argument("source", help="Source file")
-    mv_parser.add_argument("destination", help="Destination file")
-    mv_parser.set_defaults(func=commands.move_file)
+    mv = subs.add_parser("mv")
+    mv.add_argument("source")
+    mv.add_argument("destination")
+    mv.set_defaults(func=commands.move_file)
 
-    # rm
-    rm_parser = subparsers.add_parser("rm", help="Delete a file or directory recursively")
-    rm_parser.add_argument("path", help="File or directory to delete")
-    rm_parser.set_defaults(func=commands.remove)
+    rm = subs.add_parser("rm")
+    rm.add_argument("path")
+    rm.set_defaults(func=commands.remove)
 
-    # run
-    run_parser = subparsers.add_parser("run", help="Executes files and programs")
-    run_parser.add_argument("path", help="Path to file")
-    run_parser.add_argument("args", nargs=argparse.REMAINDER, help="Arguments for the program")
-    run_parser.set_defaults(func=commands.run_file)
+    mkdir = subs.add_parser("mkdir")
+    mkdir.add_argument("path")
+    mkdir.set_defaults(func=commands.make_directory)
 
-    # mkdir
-    mkdir_parser = subparsers.add_parser("mkdir", help="Makes a directory")
-    mkdir_parser.add_argument("path", help="Path where directory will be created")
-    mkdir_parser.set_defaults(func=commands.make_directory)
+    crf = subs.add_parser("crf")
+    crf.add_argument("path")
+    crf.set_defaults(func=commands.create_file)
 
-    # create file
-    crf_parser = subparsers.add_parser("crf", help="Makes an empty file")
-    crf_parser.add_argument("path", help="Path where file will be created")
-    crf_parser.set_defaults(func=commands.create_file)
+    run = subs.add_parser("run")
+    run.add_argument("path")
+    run.add_argument("args", nargs=argparse.REMAINDER)
+    run.set_defaults(func=commands.run_file)
 
-    # cat
-    cat_parser = subparsers.add_parser("cat", help="Display file content")
-    cat_parser.add_argument("path", help="File to display")
-    cat_parser.set_defaults(func=commands.cat_file)
+    cat = subs.add_parser("cat")
+    cat.add_argument("path", nargs="*", default=None)
+    cat.set_defaults(func=commands.cat_command)
 
-    # head
-    head_parser = subparsers.add_parser("head", help="Display first N lines of a file")
-    head_parser.add_argument("path", help="File to display")
-    head_parser.add_argument("-n", type=int, default=10, help="Number of lines to show (default 10)")
-    head_parser.set_defaults(func=commands.head_file)
+    head = subs.add_parser("head")
+    head.add_argument("path")
+    head.add_argument("-n", type=int, default=10)
+    head.set_defaults(func=commands.head_file)
 
-    # tail
-    tail_parser = subparsers.add_parser("tail", help="Display last N lines of a file")
-    tail_parser.add_argument("path", help="File to display")
-    tail_parser.add_argument("-n", type=int, default=10, help="Number of lines to show (default 10)")
-    tail_parser.set_defaults(func=commands.tail_file)
+    tail = subs.add_parser("tail")
+    tail.add_argument("path", nargs="?")
+    tail.set_defaults(func=commands.tail_file)
+
+    alias = subs.add_parser("alias")
+    # Accept the full assignment string (e.g., 'vtest="echo ALIAS_OK"') as one argument
+    alias.add_argument("assignment", nargs=1)
+    alias.set_defaults(func=commands.alias_command)
+
+    unalias = subs.add_parser("unalias")
+    unalias.add_argument("name")
+    unalias.set_defaults(func=commands.unalias_command)
+
+    export = subs.add_parser("export")
+    export.add_argument("assignment", nargs=1)  # Change 2: assignment is a list of 1 string
+    export.set_defaults(func=commands.export_var)
+
+    sleep = subs.add_parser("sleep", help="Sleep for N seconds")
+    sleep.add_argument("seconds", type=float)  # Change 3: Set type to float
+    sleep.add_argument("--background", "-b", action="store_true",
+                       help="Run in background (internal)")
+    sleep.set_defaults(func=commands.sleep_builtin)  # Change 3: Correct func name
+
+    # Job control
+    jobs = subs.add_parser("jobs")
+    jobs.set_defaults(func=lambda args: JOBCTL.jobs_list())
+
+    ps = subs.add_parser("ps")
+    ps.add_argument("--active", action="store_true")
+    ps.set_defaults(func=lambda args: JOBCTL.ps(active_only=args.active))
+
+    fg = subs.add_parser("fg")
+    fg.add_argument("jid", type=int)
+    fg.set_defaults(func=lambda args: JOBCTL.fg(args.jid))
+
+    bg = subs.add_parser("bg")
+    bg.add_argument("jid", type=int)
+    bg.set_defaults(func=lambda args: JOBCTL.bg(args.jid))
+
+    stop = subs.add_parser("stop")
+    stop.add_argument("jid", type=int)
+    stop.set_defaults(func=lambda args: JOBCTL.stop(args.jid))
+
+    kill = subs.add_parser("kill")
+    kill.add_argument("jid", type=int)
+    kill.add_argument("--signal", "-s", type=int, default=15)
+    kill.set_defaults(func=lambda args: JOBCTL.kill(args.jid, args.signal))
 
     return parser
+

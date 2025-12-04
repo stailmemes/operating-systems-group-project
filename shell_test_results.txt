@@ -1,0 +1,171 @@
+Shell validator run
+Command: py Repl.py
+============================================================
+
+TEST: echo
+RESULT: PASS
+OUTPUT:
+hello
+------------------------------------------------------------
+TEST: pwd
+RESULT: PASS
+OUTPUT:
+C:\Users\stail\PycharmProjects\operating-systems-group-project
+------------------------------------------------------------
+TEST: mkdir/ls/rm
+RESULT: PASS
+OUTPUT:
+.git
+.idea
+.myossh_history
+.myossh_processes.sqlite
+.myossh_processes.sqlite-shm
+.myossh_processes.sqlite-wal
+Externals_test.py
+Interrupt.py
+PrintFormatter.py
+README.md
+Repl.py
+__pycache__
+argparser.py
+commands.py
+debug_parser.py
+exportToHTML
+external_runner.py
+full_shell_validator.mysh
+process_subsystem.py
+run_validator.py
+shell_test_results.txt
+show_fork_demo.mysh
+test.mysh
+test_repl_script.txt
+validator_tmp
+venv
+------------------------------------------------------------
+TEST: cd
+RESULT: PASS
+OUTPUT:
+C:\Users\stail\PycharmProjects\operating-systems-group-project\validator_tmp2
+------------------------------------------------------------
+TEST: cp/mv
+RESULT: PASS
+OUTPUT:
+.git
+.idea
+.myossh_history
+.myossh_processes.sqlite
+.myossh_processes.sqlite-shm
+.myossh_processes.sqlite-wal
+Externals_test.py
+Interrupt.py
+PrintFormatter.py
+README.md
+Repl.py
+__pycache__
+a_test.txt
+argparser.py
+b_test.txt
+commands.py
+debug_parser.py
+exportToHTML
+external_runner.py
+full_shell_validator.mysh
+process_subsystem.py
+run_validator.py
+shell_test_results.txt
+show_fork_demo.mysh
+test.mysh
+test_repl_script.txt
+venv
+.git
+.idea
+.myossh_history
+.myossh_processes.sqlite
+.myossh_processes.sqlite-shm
+.myossh_processes.sqlite-wal
+Externals_test.py
+Interrupt.py
+PrintFormatter.py
+README.md
+Repl.py
+__pycache__
+a_test.txt
+argparser.py
+c_test.txt
+commands.py
+debug_parser.py
+exportToHTML
+external_runner.py
+full_shell_validator.mysh
+process_subsystem.py
+run_validator.py
+shell_test_results.txt
+show_fork_demo.mysh
+test.mysh
+test_repl_script.txt
+venv
+------------------------------------------------------------
+TEST: cat/head/tail
+RESULT: PASS
+OUTPUT:
+1
+2
+3
+4
+5
+1
+2
+4
+5
+------------------------------------------------------------
+TEST: alias/unalias
+RESULT: PASS
+OUTPUT:
+ALIAS_OK
+Alias removed: vtest
+------------------------------------------------------------
+TEST: export/var
+RESULT: PASS
+OUTPUT:
+Exported VALIDATOR_VAR=42
+42
+------------------------------------------------------------
+TEST: redirection
+RESULT: PASS
+OUTPUT:
+redir_test
+redir_test
+appended
+------------------------------------------------------------
+TEST: pipeline + endpoint redirection
+RESULT: PASS
+OUTPUT:
+pipetest
+------------------------------------------------------------
+TEST: background jobs & jobs
+RESULT: PASS
+OUTPUT:
+[1] pid=Builtin running start=05:12:00 end=- :: sleep 2
+------------------------------------------------------------
+TEST: fg (bring job to foreground)
+RESULT: PASS
+OUTPUT:
+[1] Builtin job sleep 2 foregrounded. Waiting for completion...
+[1] Builtin job completed.
+------------------------------------------------------------
+TEST: kill job
+RESULT: PASS
+OUTPUT:
+[1] pid=Builtin running start=05:12:06 end=- :: sleep 10
+[1] Builtin job killed (removed from job list).
+------------------------------------------------------------
+TEST: run script builtin
+RESULT: PASS
+OUTPUT:
+nested ok
+------------------------------------------------------------
+TEST: unknown command handling
+RESULT: PASS
+OUTPUT:
+Command not found: unknown_cmd_hopefully_not_present
+------------------------------------------------------------
