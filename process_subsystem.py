@@ -104,12 +104,23 @@ class JobController:
             # Builtin (thread) stop not supported
             print(f"Cannot stop builtin job {jid}")
 
-    def kill(self, jid, sig=None):
+    def _lookup_job(self, identifier):
+        # identifier may be a JID or a PID (for convenience when users run `kill <pid>`)
+        job = self.jobs.get(identifier)
+        if job:
+            return identifier, job
+
+        for jid, job in self.jobs.items():
+            if job.pid == identifier:
+                return jid, job
+        return None, None
+
+    def kill(self, identifier, sig=None):
         with self.lock:
-            if jid not in self.jobs:
-                print(f"kill: job {jid} not found")
+            jid, job = self._lookup_job(identifier)
+            if job is None:
+                print(f"kill: job {identifier} not found")
                 return
-            job = self.jobs[jid]
 
         if job.proc:
             try:
@@ -125,7 +136,7 @@ class JobController:
             job.status = "Killed"
 
         with self.lock:
-            if jid in self.jobs:
+            if jid is not None and jid in self.jobs:
                 del self.jobs[jid]
 
 # Global JOBCTL for shell modules

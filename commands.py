@@ -6,6 +6,7 @@ import shutil
 import sys
 import time
 import subprocess
+import threading
 
 # alias store (injected by Repl)
 ALIASES = {}
@@ -279,10 +280,99 @@ def run_file(args):
     if not os.path.exists(path):
         print(f"{path}: this file does not exist")
         return
-    # Choose 'py' if on Windows and 'python' otherwise
-    cmd = ["py", "Repl.py", path] if os.name == "nt" else [sys.executable, "Repl.py", path]
+    ext = os.path.splitext(path)[1].lower()
+    extra_args = getattr(args, "args", []) or []
+
+    def _register_job(proc, description, background):
+        if JOBCTL is None:
+            return None
+        jid, job = JOBCTL.register_proc(proc, description, background)
+        if background:
+            print(f"[{jid}] {job.pid}")
+        return jid
+
+    def _cleanup_job(jid):
+        if JOBCTL is None or jid is None:
+            return
+        with JOBCTL.lock:
+            if jid in JOBCTL.jobs:
+                del JOBCTL.jobs[jid]
+
+    def _wait_and_cleanup(proc, jid):
+        try:
+            proc.wait()
+        finally:
+            _cleanup_job(jid)
+
     try:
-        proc = subprocess.run(cmd, capture_output=False)
+        if os.name == "nt":
+            # Prefer explicit handlers on Windows to avoid shell resolution errors
+            if ext == ".py":
+                cmd = ["py", path] if shutil.which("py") else [sys.executable, path]
+                background_launch = False
+            elif ext == ".sh":
+                cmd = ["bash", path]
+                background_launch = False
+            elif ext == ".txt":
+                # Try Notepad directly via well-known paths/PATH before falling back to shell associations
+                cmd = None
+                notepad_candidates = []
+                system_root = os.environ.get("SystemRoot")
+                if system_root:
+                    notepad_candidates.append(os.path.join(system_root, "system32", "notepad.exe"))
+                notepad_candidates.extend(["notepad.exe", "notepad"])
+
+                for exe in notepad_candidates:
+                    if os.path.isfile(exe) or shutil.which(exe):
+                        cmd = [exe, path]
+                        break
+
+                if cmd is None:
+                    # Fallback to the system file association
+                    os.startfile(path)  # type: ignore[attr-defined]
+                    return
+                background_launch = True
+            else:
+                # Fallback to the system file association
+                os.startfile(path)  # type: ignore[attr-defined]
+                return
+            proc = subprocess.Popen(cmd + extra_args)
+            jid = _register_job(proc, f"run {path}", background_launch)
+            if background_launch:
+                threading.Thread(target=_wait_and_cleanup, args=(proc, jid), daemon=True).start()
+            else:
+                _wait_and_cleanup(proc, jid)
+        else:
+            if ext == ".py":
+                cmd = [sys.executable, path]
+                background_launch = False
+            elif ext == ".sh":
+                cmd = ["bash", path]
+                background_launch = False
+            elif shutil.which("xdg-open"):
+                cmd = ["xdg-open", path]
+                background_launch = True
+            elif sys.platform == "darwin" and shutil.which("open"):
+                cmd = ["open", path]
+                background_launch = True
+            else:
+                # Fallback to common terminal editors for text files
+                text_editors = [
+                    editor for editor in ("nano", "vim", "vi", "less", "cat")
+                    if shutil.which(editor)
+                ]
+                if ext == ".txt" and text_editors:
+                    cmd = [text_editors[0], path]
+                    background_launch = False
+                else:
+                    print(f"Don't know how to run {path}")
+                    return
+            proc = subprocess.Popen(cmd + extra_args)
+            jid = _register_job(proc, f"run {path}", background_launch)
+            if background_launch:
+                threading.Thread(target=_wait_and_cleanup, args=(proc, jid), daemon=True).start()
+            else:
+                _wait_and_cleanup(proc, jid)
     except Exception as e:
         print(f"Error running {path}: {e}")
 
